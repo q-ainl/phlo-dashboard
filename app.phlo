@@ -1,0 +1,40 @@
+prop lang => 'nl'
+prop token => %cookies->token ??= token(20)
+prop title = 'Q-dev Dashboard'
+prop themeColor = 'black'
+prop theme => %session->theme ?? 'cobalt'
+prop trans => %session->trans ?? 'cards'
+prop options = 'wss'
+prop version = '1.0.1'
+prop model = 'gpt-4o'
+
+prop models = ['visitor']
+prop menu = [
+	'overview' => ['icon' => '🏠', 'uri' => 'overview',    'title' => 'Overzicht'],
+	'visitor'  => ['icon' => '👁️', 'uri' => 'visitors',   'title' => 'Bezoekers'],
+	'site'     => ['icon' => '🌐', 'uri' => 'sites',       'title' => 'Sites'],
+]
+
+method useQdev {
+	%creds->mysql->host = %creds->qdev->host
+	%creds->mysql->database = %creds->qdev->database
+	%creds->mysql->user = %creds->qdev->user
+	%creds->mysql->password = %creds->qdev->password
+}
+
+%security->strict
+$this->token
+%req->path === void || str_starts_with(%req->path, 'visitor') ? $this->useQdev() : null
+if (app::route()) return
+if (%req->method !== 'GET') return apply(error: 'Invalid request')
+main('Page not found!')
+
+view head: %CSRF
+
+<style>
+:root {
+	font-family: system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+	scroll-behavior: smooth
+}
+dialog p: white-space: pre-wrap
+</style>

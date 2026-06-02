@@ -1,0 +1,479 @@
+static apps => [
+	['name' => 'ecms.nu', 'prod' => 'ecms.nu', 'dev' => 'dev.ecms.nu', 'stage' => 'stage.ecms.nu'],
+	['name' => 'factuur.software', 'prod' => 'factuur.software', 'dev' => 'dev.factuur.software', 'stage' => 'stage.factuur.software'],
+	['name' => 'filesystem.online', 'prod' => 'filesystem.online', 'dev' => 'dev.filesystem.online', 'stage' => 'stage.filesystem.online'],
+	['name' => 'flysight.video', 'prod' => 'flysight.video', 'dev' => 'dev.flysight.video', 'stage' => 'stage.flysight.video'],
+	['name' => 'jordiboerman.nl', 'prod' => 'jordiboerman.nl', 'dev' => 'dev.jordiboerman.nl', 'stage' => 'stage.jordiboerman.nl'],
+	['name' => 'logbook.tools', 'prod' => 'logbook.tools', 'dev' => 'dev.logbook.tools', 'stage' => 'stage.logbook.tools'],
+	['name' => 'q-ai.nl', 'prod' => 'q-ai.nl', 'dev' => 'dev.q-ai.nl', 'stage' => 'stage.q-ai.nl'],
+	['name' => 'q-dev.nl', 'prod' => 'q-dev.nl', 'dev' => 'dev.qdev.nl', 'stage' => 'stage.qdev.nl'],
+	['name' => 'teslacam.online', 'prod' => 'teslacam.online', 'dev' => 'dev.teslacam.online', 'stage' => 'stage.teslacam.online'],
+	['name' => 'wapps.nu', 'prod' => 'wapps.nu', 'dev' => 'dev.wapps.nu', 'stage' => 'stage.wapps.nu'],
+]
+
+static icons => [
+	'activity' => '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+	'server' => '<rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/>',
+	'cpu' => '<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/>',
+	'harddrive' => '<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/>',
+	'clock' => '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+	'globe' => '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+	'users' => '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+	'check' => '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+	'x' => '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+	'alert' => '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+	'lock' => '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+	'refresh' => '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+]
+
+static icon($name, $size = 16, $class = void) => '<svg class="ic'.($class ? ' '.$class : void).'" width="'.$size.'" height="'.$size.'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'.(static::icons()[$name] ?? void).'</svg>'
+
+static remoteRows($sql){
+	try {
+		$pdo = new \PDO('mysql:host='.%creds->qdev->host.';dbname='.%creds->qdev->database, %creds->qdev->user, %creds->qdev->password, [\PDO::ATTR_TIMEOUT => 3, \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION])
+		return $pdo->query($sql)->fetchAll(\PDO::FETCH_OBJ)
+	}
+	catch (\Throwable $e){
+		return []
+	}
+}
+
+static pct($used, $total) => $total > 0 ? min(100, (int)round($used / $total * 100)) : 0
+
+static loadPct($m) => ($m->cpu_count ?? 0) > 0 ? min(100, (int)round($m->load1 / $m->cpu_count * 100)) : 0
+
+static bar($label, $pct, $ic, $variant, $detail){
+	$level = $variant ?: ($pct > 85 ? 'high' : ($pct > 70 ? 'mid' : 'ok'))
+	$right = ($detail ? tag('span', $detail, class: 'pb-detail') : void).tag('span', $pct.'%', class: 'pb-val')
+	$top = tag('div', tag('span', static::icon($ic, 15, 'muted').tag('span', $label), class: 'pb-label').tag('span', $right, class: 'pb-right'), class: 'pb-top')
+	$track = tag('div', tag('div', void, class: 'pb-fill', style: 'width:'.$pct.'%'), class: 'pb-track')
+	return tag('div', $top.$track, class: 'pb '.$level)
+}
+
+static serverCard($label, $sub, $m){
+	$titles = tag('div', tag('h2', static::icon('server', 18, 'blue').tag('span', $label), class: 'sw-name').tag('span', $sub, class: 'sw-sub'), class: 'sw-titles')
+	if (!$m) return tag('section', tag('div', $titles.tag('span', tag('span', void, class: 'sw-dot').tag('span', 'offline'), class: 'sw-pill offline'), class: 'sw-head').tag('p', 'niet bereikbaar', class: 'ov-offline'), class: 'sw-card')
+	$pill = tag('span', tag('span', void, class: 'sw-dot').tag('span', 'online'), class: 'sw-pill online')
+	$head = tag('div', $titles.$pill, class: 'sw-head')
+	$uptime = tag('div', static::icon('clock', 20, 'emerald').tag('div', tag('div', 'Uptime', class: 'sw-tile-label').tag('div', age_human($m->uptime_sec), class: 'sw-tile-val')), class: 'sw-tile')
+	$bars = static::bar('CPU Load', static::loadPct($m), 'cpu', void, $m->load1.' / '.$m->cpu_count.' cpu').static::bar('Geheugen', static::pct($m->mem_used, $m->mem_total), 'activity', void, size_human($m->mem_used).' / '.size_human($m->mem_total)).static::bar('Disk', (int)$m->disk_pct, 'harddrive', 'disk', size_human($m->disk_used).' / '.size_human($m->disk_total))
+	return tag('section', $head.$uptime.tag('div', $bars, class: 'sw-bars'), class: 'sw-card')
+}
+
+static envState($code){
+	$c = (int)$code
+	if ($c === 0 || $c >= 500) return 'down'
+	if ($c === 401 || $c === 403) return 'auth'
+	if ($c >= 400) return 'warn'
+	return 'up'
+}
+
+static envChip($label, $host, $status){
+	$st = $status[$host] ?? null
+	if (!$st) return tag('div', tag('span', $label, class: 'ping-label').tag('span', dash, class: 'ping-main empty'), class: 'ping')
+	$state = static::envState($st->code)
+	$lock = $st->authed ? static::icon('lock', 11, 'lock') : void
+	$main = tag('span', void, class: 'st-dot '.$state).tag('span', (int)$st->code ?: 'down', class: 'ping-code').$lock
+	$inner = tag('span', $label, class: 'ping-label').tag('span', $main, class: 'ping-main '.$state).tag('span', $st->time_ms.'ms', class: 'ping-ms')
+	return tag('a', $inner, href: 'https://'.$host.'/', target: '_blank', class: 'ping', title: 'Open '.$host)
+}
+
+static appRow($app, $status, $visitors){
+	$vis = (int)($visitors[$app['prod']] ?? 0)
+	$err = 0
+	foreach (['dev', 'stage', 'prod'] AS $e) if (($s = $status[$app[$e]] ?? null) && static::envState($s->code) === 'down') $err++
+	$icon = $err ? static::icon('x', 18, 'error') : static::icon('check', 18, 'emerald')
+	$name = tag('td', tag('a', $icon.tag('span', $app['name'], class: 'app-label'), href: 'https://'.$app['prod'].'/', target: '_blank', class: 'app-link'), class: 'app-name')
+	$v = tag('td', tag('span', static::icon('users', 15, 'blue').tag('span', $vis, class: 'vis-num'), class: 'vis'), class: 'c')
+	$box = tag('div', static::envChip('DEV', $app['dev'], $status).tag('div', void, class: 'ping-div').static::envChip('STAGE', $app['stage'], $status).tag('div', void, class: 'ping-div').static::envChip('PROD', $app['prod'], $status), class: 'ping-box')
+	$errCell = tag('td', $err ? tag('span', static::icon('alert', 13).tag('span', $err), class: 'err-badge') : tag('span', '0', class: 'err-zero'), class: 'c')
+	return tag('tr', $name.$v.tag('td', $box, class: 'c').$errCell)
+}
+
+static appTable($apps, $status, $visitors){
+	$head = tag('tr', tag('th', 'Applicatie').tag('th', 'Bezoekers', class: 'c').tag('th', 'Dev / Stage / Prod', class: 'c').tag('th', 'Errors', class: 'c'))
+	$body = loop($apps, fn($app) => static::appRow($app, $status, $visitors), void)
+	$tbl = tag('table', tag('thead', $head).tag('tbody', $body))
+	$badge = tag('span', count($apps).' actief', class: 'st-badge')
+	$h = tag('div', tag('h2', static::icon('globe', 20, 'blue').tag('span', 'Gemonitorde sites'), class: 'st-title').$badge, class: 'st-head')
+	return tag('section', $h.tag('div', $tbl, class: 'st-scroll'), class: 'sw-card st-card')
+}
+
+route both GET overview {
+	%app->active = 'overview'
+	$local = %MySQL->record(table: 'metrics', where: "server='dev'", order: 'checked DESC', limit: '1')
+	$remote = static::remoteRows("SELECT * FROM metrics WHERE server='q-ai' ORDER BY checked DESC LIMIT 1")[0] ?? null
+	$status = %MySQL->records(table: 'status s', columns: 's.host, s.code, s.authed, s.time_ms', joins: 'JOIN (SELECT host, MAX(checked) c FROM status GROUP BY host) m ON s.host = m.host AND s.checked = m.c')
+	$visitors = %MySQL->pair('visitors', 'host, COUNT(DISTINCT token)', group: 'host')
+	$servers = tag('div', static::serverCard('Productie', 'q-ai.nl', $remote).static::serverCard('Dev / Stage', 'qdev.nl', $local), class: 'dash-servers')
+	$sites = tag('div', static::appTable(static::apps(), $status, $visitors), class: 'dash-sites')
+	$titleBlock = tag('div', tag('h1', static::icon('activity', 26, 'blue').tag('span', 'Centraal Systeem Dashboard', class: 'grad'), class: 'dash-title').tag('p', 'Real-time monitoring van servers en applicaties', class: 'dash-sub'))
+	$update = tag('div', static::icon('refresh', 16, 'muted').tag('span', 'Laatste update: '.tag('span', date('H:i:s'), class: 'upd-time')), class: 'dash-update')
+	$head = tag('header', $titleBlock.$update, class: 'dash-head')
+	main(tag('div', $head.tag('div', $servers.$sites, class: 'dash-cols'), class: 'dash'), 'Overzicht')
+}
+
+<style>
+.ic {
+	display: inline-block
+	flex-shrink: 0
+	vertical-align: middle
+}
+.ic.blue: color: $primary
+.ic.emerald: color: $success
+.ic.muted: color: $muted
+.ic.error: color: $error
+.ic.purple: color: #a855f7
+.ic.lock: color: $muted
+.dash {
+	display: flex
+	flex-direction: column
+	gap: 1.5rem
+	margin: 0 auto
+	max-width: 1400px
+	padding: 1rem .25rem 2rem
+}
+.dash-head {
+	align-items: center
+	display: flex
+	flex-wrap: wrap
+	gap: 1rem
+	justify-content: space-between
+}
+.dash-title {
+	align-items: center
+	display: flex
+	font-size: 1.65rem
+	font-weight: 800
+	gap: .6rem
+	margin: 0
+}
+.dash-title .grad {
+	background: linear-gradient(90deg, $primary, $success)
+	-webkit-background-clip: text
+	background-clip: text
+	color: transparent
+}
+.dash-sub {
+	color: $muted
+	margin: .35rem 0 0
+}
+.dash-update {
+	align-items: center
+	background: $surface
+	border: 1px solid $border
+	border-radius: 10px
+	color: $muted
+	display: flex
+	font-size: .85rem
+	gap: .5rem
+	padding: .5rem .85rem
+}
+.upd-time {
+	color: $text
+	font-family: monospace
+}
+.dash-cols {
+	display: flex
+	flex-direction: column
+	gap: 1.5rem
+}
+@media(min-width:1100px){
+	.dash-cols: align-items: start
+	.dash-cols: flex-direction: row
+	.dash-servers: max-width: 33%
+}
+.dash-servers {
+	display: flex
+	flex-direction: column
+	flex: 1 1 0
+	gap: 1.5rem
+	min-width: 300px
+}
+.dash-sites {
+	flex: 1 1 0
+	min-width: 0
+}
+.sw-card {
+	background: $surface
+	border: 1px solid $border
+	border-radius: 12px
+	box-shadow: 0 10px 25px #0006
+	display: flex
+	flex-direction: column
+	gap: 1.25rem
+	padding: 1.25rem
+}
+.sw-head {
+	align-items: flex-start
+	display: flex
+	gap: .5rem
+	justify-content: space-between
+}
+.sw-titles {
+	display: flex
+	flex-direction: column
+	gap: .15rem
+}
+.sw-name {
+	align-items: center
+	color: $text
+	display: flex
+	font-size: 1.2rem
+	font-weight: 700
+	gap: .5rem
+	margin: 0
+}
+.sw-name .ic: color: $primary
+.sw-sub {
+	color: $muted
+	font-family: monospace
+	font-size: .8rem
+}
+.sw-pill {
+	align-items: center
+	background: $bg
+	border: 1px solid $border
+	border-radius: 999px
+	display: inline-flex
+	font-size: .8rem
+	gap: .45rem
+	padding: .25rem .7rem
+	text-transform: capitalize
+}
+.sw-dot {
+	animation: dashpulse 2s ease-in-out infinite
+	border-radius: 50%
+	height: 8px
+	width: 8px
+}
+.sw-pill.online .sw-dot: background: $success
+.sw-pill.offline .sw-dot: background: $error
+@keyframes dashpulse {
+	0%, 100%: opacity: 1
+	50%: opacity: .35
+}
+.sw-tile {
+	align-items: center
+	background: $bg
+	border: 1px solid $border
+	border-radius: 10px
+	display: flex
+	gap: .75rem
+	padding: .75rem
+}
+.sw-tile .ic: color: $success
+.sw-tile-label {
+	color: $muted
+	font-size: .75rem
+}
+.sw-tile-val {
+	color: $text
+	font-weight: 600
+}
+.sw-bars {
+	display: flex
+	flex-direction: column
+	gap: 1rem
+}
+.pb-top {
+	align-items: center
+	color: $muted
+	display: flex
+	font-size: .85rem
+	justify-content: space-between
+	margin-bottom: .4rem
+}
+.pb-label {
+	align-items: center
+	display: flex
+	gap: .4rem
+}
+.pb-right {
+	align-items: baseline
+	display: flex
+	gap: .5rem
+}
+.pb-detail {
+	color: $muted
+	font-family: monospace
+	font-size: .78em
+}
+.pb-val {
+	color: $text
+	font-weight: 600
+}
+.pb-track {
+	background: color-mix(in srgb, $surface 75%, $text)
+	border-radius: 999px
+	height: 8px
+	overflow: hidden
+}
+.pb-fill {
+	background: $primary
+	border-radius: 999px
+	height: 100%
+	transition: width .5s ease-in-out
+}
+.pb.mid .pb-fill: background: $warn
+.pb.high .pb-fill: background: $error
+.pb.disk .pb-fill: background: #a855f7
+.st-card {
+	gap: 0
+	overflow: hidden
+	padding: 0
+}
+.st-head {
+	align-items: center
+	background: color-mix(in srgb, $surface 92%, $text)
+	border-bottom: 1px solid $border
+	display: flex
+	gap: .5rem
+	justify-content: space-between
+	padding: 1.1rem 1.25rem
+}
+.st-title {
+	align-items: center
+	color: $text
+	display: flex
+	font-size: 1.2rem
+	font-weight: 700
+	gap: .5rem
+	margin: 0
+}
+.st-badge {
+	background: color-mix(in srgb, $primary 20%, transparent)
+	border-radius: 999px
+	color: $primary
+	font-size: .72rem
+	font-weight: 600
+	padding: .2rem .6rem
+}
+.st-scroll {
+	overflow-x: auto
+}
+.st-card table {
+	border-collapse: collapse
+	width: 100%
+}
+.st-card th {
+	color: $muted
+	font-size: .72rem
+	font-weight: 500
+	letter-spacing: .05em
+	padding: .8rem 1rem
+	text-align: left
+	text-transform: uppercase
+	white-space: nowrap
+}
+.st-card th.c: text-align: center
+.st-card td {
+	border-top: 1px solid color-mix(in srgb, $border 60%, transparent)
+	padding: .7rem 1rem
+	vertical-align: middle
+}
+.st-card td.c: text-align: center
+.st-card tbody tr: transition: background .15s ease
+.st-card tbody tr:hover: background: color-mix(in srgb, $surface 88%, $text)
+.app-link {
+	align-items: center
+	color: $text
+	display: flex
+	font-weight: 600
+	gap: .6rem
+	text-decoration: none
+	white-space: nowrap
+}
+.app-link:hover .app-label: color: $primary
+.vis {
+	align-items: center
+	color: $muted
+	display: inline-flex
+	gap: .4rem
+	justify-content: center
+}
+.vis-num {
+	color: $text
+	font-family: monospace
+}
+.ping-box {
+	align-items: stretch
+	background: $bg
+	border: 1px solid $border
+	border-radius: 10px
+	display: inline-flex
+	gap: .75rem
+	justify-content: center
+	padding: .5rem .75rem
+}
+.ping-div {
+	background: $border
+	width: 1px
+}
+.ping {
+	align-items: center
+	color: $text
+	display: flex
+	flex-direction: column
+	gap: .15rem
+	min-width: 66px
+	text-decoration: none
+}
+.ping-label {
+	color: $muted
+	font-size: .62rem
+	letter-spacing: .06em
+}
+.ping-main {
+	align-items: center
+	display: flex
+	font-family: monospace
+	font-size: .85rem
+	font-weight: 600
+	gap: .25rem
+}
+.ping-main.up: color: $success
+.ping-main.auth: color: $primary
+.ping-main.warn: color: $warn
+.ping-main.down: color: $error
+.ping-main.empty {
+	color: $muted
+	opacity: .4
+}
+.ping-ms {
+	color: $muted
+	font-family: monospace
+	font-size: .65rem
+}
+.st-dot {
+	border-radius: 50%
+	display: inline-block
+	flex-shrink: 0
+	height: 8px
+	width: 8px
+}
+.st-dot.up: background: $success
+.st-dot.auth: background: $primary
+.st-dot.warn: background: $warn
+.st-dot.down: background: $error
+.ping-code: line-height: 1
+.err-badge {
+	align-items: center
+	background: color-mix(in srgb, $error 20%, transparent)
+	border-radius: 999px
+	color: $error
+	display: inline-flex
+	font-weight: 700
+	gap: .3rem
+	padding: .15rem .6rem
+}
+.err-zero {
+	color: $muted
+	font-family: monospace
+	opacity: .5
+}
+.ov-offline {
+	color: $muted
+	padding: 1rem 0
+}
+</style>

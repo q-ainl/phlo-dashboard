@@ -1,0 +1,53 @@
+method __construct(public $conf)
+
+prop name => trim(explode(',', explode('{', $this->conf, 2)[0])[0])
+prop root => ($r = regex('/^\s*root\s+\*?\s*(\S+)/m', $this->conf)[1] ?? void) ? (str_ends_with($r, '/www') ? substr($r, 0, -4) : $r) : void
+prop isDev => is_file("$this->root/data/app.json")
+prop data => json_read("$this->root/data/app.json")
+prop version {
+	$file = $this->isDev ? "$this->root/app.phlo" : "$this->root/app.php"
+	if (!is_file($file)) return '??'
+	$pattern = $this->isDev ? '/prop\s+version\s*=\s*["\']?([^\s"\r\n\']+)["\']?/' : '/public\s+\$version\s*=\s*["\']?([^;"\'\r\n]+)["\']?\s*;/'
+	return regex($pattern, file_get_contents($file))[1] ?? '??'
+}
+prop hasCreds => is_file("$this->root/data/creds.ini")
+prop database => $this->hasCreds ? (($db = parse_ini_file("$this->root/data/creds.ini", true, INI_SCANNER_RAW)['mysql']['database'] ?? null) === 'control' ? null : $db) : null
+prop dashboard => $this->isDev && !strpos($this->root, 'placeholder') ? $this->data->dashboard ?? null : null
+prop visitors => visitor::list()[$this->name] ?? null
+prop siteAuth => $this->isDev && is_file($f = "$this->root/data/auth.ini") && ($s = parse_ini_file($f, true, INI_SCANNER_RAW)['site'] ?? null) && !empty($s['user']) ? rawurlencode($s['user']).':'.rawurlencode($s['password'] ?? '').'@' : void
+
+view:
+<div.host-row>
+	<div.host-header>
+		<div.host-hostname>$this->name</div>
+		<span.environment-badge>$this->version {( $this->isDev ? 'dev' : 'prod' )}</span>
+	</div>
+	<div.host-content>
+		<if $visitors = site::visitors()[$this->name] ?? null>
+			<a.host-visitors href="/visitors/f=$this->name" target=_blank>
+				<svg width=12 height=12 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx=12 cy=12 r=3></circle></svg>
+				<span>$visitors</span>
+			</a>
+		</if>
+		<if $this->database>
+			<a.host-database href="/q/adminer.php?db=$this->database" target=_blank title="Open $this->database">
+				<svg xmlns=http://www.w3.org/2000/svg width=12 height=12 viewBox="0 0 16 16" fill=currentColor><path d="M8 1c-3.866 0-7 1.343-7 3s3.134 3 7 3 7-1.343 7-3-3.134-3-7-3zM1 8c0 1.657 3.134 3 7 3s7-1.343 7-3v-2c0 1.657-3.134 3-7 3s-7-1.343-7-3v2zM1 12c0 1.657 3.134 3 7 3s7-1.343 7-3v-2c0 1.657-3.134 3-7 3s-7-1.343-7-3v2z"></svg>
+				<span.database-name>$this->database</span>
+				<span.database-size>{{ size_human(site::databases()[$this->database] ?? 0) }}</span>
+			</a>
+		</if>
+		<div.host-actions>
+			<if $this->isDev && !strpos($this->root, 'placeholder')>
+				<a.btn.btn-dashboard href="https://$this->name/$this->dashboard" target=_blank title="Dashboard">
+					<svg width=12 height=12 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2><rect x=3 y=3 width=18 height=18 rx=2 ry=2></rect><line x1=9 y1=9 x2=15 y2=9></line><line x1=9 y1=15 x2=15 y2=15></line></svg>
+				</a>
+				<a.btn.btn-ide href="https://$this->name/$this->dashboard/ide" target=_blank title="IDE">
+					<svg width=12 height=12 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+				</a>
+			</if>
+			<a.btn.btn-site href="https://$this->siteAuth$this->name/" target=_blank title="Open Site">
+				<svg width=12 height=12 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1=10 y1=14 x2=21 y2=3></line></svg>
+			</a>
+		</div>
+	</div>
+</div>

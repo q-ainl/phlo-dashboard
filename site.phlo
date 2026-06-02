@@ -1,0 +1,156 @@
+route both GET sites {
+	$sites = files('/srv/control/sites/', '*.caddy')
+	$return = []
+	foreach ($sites AS $site){
+		if (in_array($name = basename($site, '.caddy'), ['us', 'control', 'whatsapp', 'phlo.tech'])) continue
+		$conf = file_get_contents($site)
+		$hosts = regex_all('~(?(DEFINE)(?<B>\{(?:[^{}]+|(?&B))*\}))^(?![\s(@#])[^\n{}]*?\s*(?&B)~ms', $conf)[0]
+		$hosts = loop($hosts, fn($host) => %host(ltrim(strtr($host, [lf.tab => lf]))))
+		$return[] = %site(name: $name, hosts: $hosts)
+	}
+	%app->active = 'site'
+	main(tag('section', implode(lf, $return), class: 'sites-grid'), 'Sites')
+}
+
+static _databases {
+	$list = %MySQL->pair('information_schema.TABLES', 'table_schema,SUM(data_length + index_length)', group: 'table_schema')
+	unset($list['information_schema'], $list['mysql'], $list['sys'], $list['performance_schema'])
+	return $list
+}
+
+static _visitors => visitor::pair(columns: 'host,COUNT(id)', group: 'host')
+
+view:
+<div.site-card>
+	<div.site-header>
+		<h2.site-name>$this->name</h2>
+	</div>
+	<div.hosts-list>
+		<foreach $this->hosts AS $host>
+			{{ $host }}
+		</foreach>
+	</div>
+</div>
+
+<style>
+.sites-grid {
+	column-width: 350px
+	column-gap: .5rem
+	display: block
+}
+.site-card {
+	background: $surface
+	border: 1px solid $border
+	border-radius: 14px
+	break-inside: avoid
+	display: inline-block
+	margin: .25rem 0
+	padding: .75rem
+	transition: all .2s ease
+	width: 100%
+}
+.site-name {
+	color: $text
+	font-size: 16px
+	font-weight: 600
+	margin-bottom: 4px
+}
+.hosts-list {
+	display: flex
+	flex-direction: column
+	gap: 4px
+}
+.host-row {
+	background-color: color-mix(in srgb, $surface 88%, $text)
+	border-radius: 6px
+	display: flex
+	flex-direction: row
+	align-items: center
+	justify-content: space-between
+	gap: 8px
+	padding: 6px 10px
+	transition: background-color .2s ease
+}
+.host-header {
+	align-items: center
+	display: flex
+	flex: 1
+	flex-wrap: wrap
+	gap: 6px
+	min-width: 0
+}
+.host-hostname {
+	color: $text
+	font-size: 14px
+	font-weight: 500
+	white-space: nowrap
+	overflow: hidden
+	text-overflow: ellipsis
+}
+.host-content {
+	display: flex
+	align-items: center
+	gap: 8px
+	flex-shrink: 0
+}
+.host-actions {
+	display: flex
+	gap: 4px
+}
+.host-actions .btn {
+	border-radius: 4px
+	padding: 4px
+	height: 24px
+	width: 24px
+	display: flex
+	align-items: center
+	justify-content: center
+}
+.host-visitors {
+	align-items: center
+	color: $primary
+	display: flex
+	font-size: 12px
+	gap: 4px
+	white-space: nowrap
+}
+.host-database {
+	display: flex
+	align-items: center
+	gap: 4px
+	color: $text
+	text-decoration: none
+}
+.host-database > div {
+	display: flex
+	gap: 4px
+	align-items: baseline
+}
+.database-name {
+	font-size: 11px
+	font-weight: 500
+	opacity: .8
+}
+.database-size {
+	color: $primary
+	font-size: 10px
+}
+.environment-badge {
+	background-color: $surface
+	border-radius: 3px
+	font-size: 9px
+	font-weight: 600
+	letter-spacing: .5px
+	padding: 2px 4px
+	text-transform: uppercase
+	opacity: .8
+}
+.btn-site {
+	background-color: $primary
+	color: $on-primary
+}
+@media (max-width: 768px){
+	.sites-grid: column-width: 100%
+	.host-row: flex-wrap: wrap
+}
+</style>

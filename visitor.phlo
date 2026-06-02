@@ -1,0 +1,292 @@
+@ extends: model
+
+view: $this->IP
+
+static lookup($IP){
+	if (!$IP || !filter_var($IP, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) return null
+	if (!$record = %MySQL->record('lookup', ip: $IP)){
+		$res = json_decode(HTTP('https://api.ipgeolocation.io/ipgeo?apiKey='.%creds->ipgeolocation.'&ip='.$IP))
+		$record = obj(ip: $IP, city: $res->city, country: $res->country_code2, lat: $res->latitude, lon: $res->longitude, isp: $res->isp)
+		%MySQL->create('lookup', ...$record)
+	}
+	return $record
+}
+
+static objFilters => arr(real: arr(title: 'Echte bezoekers', filter: 'changed >= created AND changed - created > 33 AND host NOT LIKE "dev.%" AND IP NOT IN ("87.212.163.36", "217.122.154.229")'), me: arr(title: "Geen $_SERVER[REMOTE_ADDR]", filter: "ip!='$_SERVER[REMOTE_ADDR]'")) + create(static::column(columns: 'host', where: 'changed >= created AND changed - created > 33 AND host NOT LIKE "dev.%" AND host NOT LIKE "%.qdev.nl"', group: 'host', order: 'COUNT(id) DESC', limit: '12'), fn($host) => $host, fn($host) => arr(title: $host, filter: "host='$host'"))
+
+static titleList = 'Bezoekers'
+static titleRecord = 'Bezoeker'
+
+static table = 'visitors'
+static order = 'changed DESC'
+
+static canCreate = false
+static canChange = false
+static canDelete = false
+
+static flag($cc) => $cc && strlen($cc) === 2 && ctype_alpha($cc) ? tag('span', mb_chr(127397 + ord(strtoupper($cc[0]))).mb_chr(127397 + ord(strtoupper($cc[1]))), class: 'flag') : void
+static deviceIcon($device) => ['mobile' => '📱', 'tablet' => '📱', 'desktop' => '💻'][strtolower((string)$device)] ?? '🖥️'
+
+prop kind => !$this->IP ? 'untracked' : (str_starts_with((string)$this->IP, '66.249.') || preg_match('/bot|spider|crawl|slurp/i', (string)$this->browser) ? 'bot' : 'real')
+prop URL => tag('a', $url = "$this->host/$this->page", href: "https://$url", target: '_blank')." ($this->requests)"
+prop duration => age_human($this->changed - $this->created)
+prop client {
+	if ($this->kind === 'untracked' || (strlen((string)$this->browser) === 8 && ctype_xdigit((string)$this->browser))) return static::deviceIcon($this->device).space.tag('span', 'untracked', class: 'untracked')
+	$os = str_starts_with((string)$this->os, 'Windows') ? 'Windows' : $this->os
+	return static::deviceIcon($this->device).space.$this->browser.($os ? ' ('.$os.')' : void)
+}
+prop location => !$this->IP ? tag('span', 'untracked', class: 'untracked', title: 'Geen cookie-consent') : (($loc = visitor::lookup($this->IP)) ? tag('a', static::flag($loc->country).space.($loc->city && $loc->country ? "$loc->city, $loc->country" : ($loc->country ?? dash)), href: "https://www.google.com/maps/@$loc->lat,$loc->lon,14z", target: 'map') : dash)
+
+static objWidgets {
+	$missingIPs = static::column(
+		table: 'visitors v',
+		columns: 'DISTINCT v.IP',
+		where: 'v.IP IS NOT NULL AND v.IP != "" AND v.changed > '.(time() - (86400 * 30)).' AND NOT EXISTS (SELECT 1 FROM lookup l WHERE l.ip = v.IP)',
+	)
+	foreach ($missingIPs AS $ip) static::lookup($ip)
+	return [
+		'Actieve Bezoekers' => obj (
+			order: 1,
+			type: 'gauge',
+			data: static::item(columns: 'COUNT(id)', where: 'changed > '.(time() - 300)),
+		),
+		'Laatste 5 Bezoekers' => obj (
+			order: 4,
+			type: 'list',
+			data: loop(static::records(
+				table: 'visitors v',
+				columns: 'v.*, l.city, l.country',
+				joins: 'LEFT JOIN lookup l ON v.IP = l.ip',
+				order: 'v.changed DESC',
+				limit: 5,
+			), fn($visitor, $id) => tag('a', tag('b', $visitor->host).space.strtoupper($visitor->lang).space.$visitor->city.space.$visitor->browser.space.$visitor->os, href: "/visitor/$id", class: 'async')." - ".tag('span', void, data_ts: $visitor->changed)),
+		),
+		'Top 5 Landen (30d)' => obj (
+			order: 9,
+			type: 'pie',
+			data: static::pair (
+				table: 'visitors v',
+				columns: 'COALESCE(l.country, "Onbekend") AS country, COUNT(v.id) AS count',
+				joins: 'LEFT JOIN lookup l ON v.IP = l.ip',
+				where: 'v.changed > '.(time() - (86400 * 30)),
+				group: 'country',
+				order: 'count DESC',
+				limit: 5,
+			),
+		),
+		'Top 5 Browsers (30d)' => obj (
+			order: 10,
+			type: 'pie',
+			data: static::pair (
+				columns: 'browser, COUNT(id) AS count',
+				where: 'changed > '.(time() - (86400 * 30)),
+				group: 'browser',
+				order: 'count DESC',
+				limit: 5,
+			),
+		),
+		'Top 8 Referrers (30d)' => obj (
+			order: 11,
+			type: 'list',
+			data: loop(static::pair (
+				columns: 'referrer, COUNT(id) AS count',
+				where: 'referrer IS NOT NULL AND changed > '.(time() - (86400 * 30)),
+				group: 'referrer',
+				order: 'count DESC',
+				limit: 8,
+			), fn($count, $ref) => tag('b', $count.'x').space.tag('a', href: $ref, target: '_blank', inner: preg_replace('/^https?:\/\/(www\.)?/', '', $ref))),
+		),
+	]
+}
+
+static schema => arr (
+	id: field (
+		type: 'text',
+		title: 'ID',
+		length: 20,
+		create: false,
+		change: false,
+		list: false,
+		record: false,
+	),
+	token: field (
+		type: 'text',
+		title: 'Token',
+		length: 20,
+		list: false,
+		record: false,
+	),
+	host: field (
+		type: 'text',
+		title: 'Host',
+		list: false,
+		record: false,
+		search: true,
+		length: 24,
+	),
+	page: field (
+		type: 'text',
+		list: false,
+		record: false,
+		title: 'Pagina',
+		search: true,
+		length: 24,
+	),
+	lang: field (
+		type: 'text',
+		title: 'Taal',
+		length: 2,
+		list: false,
+	),
+	URL: field (
+		type: 'virtual',
+	),
+	kind: field (
+		type: 'virtual',
+		title: 'Type',
+		list: true,
+		label: fn($r) => tag('span', $r->kind, class: 'vkind '.$r->kind),
+	),
+	location: field (
+		type: 'virtual',
+		title: 'Locatie',
+		list: true,
+	),
+	duration: field (
+		type: 'virtual',
+		title: 'Duur',
+	),
+	client: field (
+		type: 'virtual',
+		title: 'Client',
+		list: true,
+	),
+	isp: field (
+		type: 'virtual',
+		title: 'Provider',
+		label: fn($r) => visitor::lookup($r->IP)?->isp ?? dash,
+	),
+	IP: field (
+		type: 'text',
+		title: 'IP Adres',
+		length: 15,
+		search: true,
+	),
+	browser: field (
+		type: 'text',
+		title: 'Browser',
+		length: 18,
+		list: false,
+		search: true,
+		record: false,
+	),
+	os: field (
+		type: 'text',
+		title: 'OS',
+		length: 18,
+		list: false,
+		search: true,
+		record: false,
+	),
+	device: field (
+		type: 'text',
+		title: 'Apparaat',
+		length: 12,
+		list: false,
+		record: false,
+	),
+	requests: field (
+		type: 'number',
+		title: 'Pagina\'s',
+		list: true,
+	),
+	state: field (
+		type: 'select',
+		title: 'Status',
+		options: ['active', 'blurred', 'hidden'],
+		list: false,
+	),
+	width: field (
+		type: 'number',
+		title: 'Breedte',
+		list: false,
+		record: false,
+	),
+	height: field (
+		type: 'number',
+		title: 'Hoogte',
+		list: false,
+		record: false,
+	),
+	referrer: field (
+		type: 'text',
+		title: 'Referrer',
+		length: 100,
+		label: fn($r) => ($ref = $r->referrer) ? (str_starts_with($ref, 'search:') ? tag('span', substr($ref, 7), class: 'ref-search') : tag('a', href: (str_contains($ref, '://') ? $ref : 'https://'.$ref), target: '_blank', inner: preg_replace('/^https?:\/\/(www\.)?/', '', $ref))) : tag('span', 'direct', class: 'untracked'),
+		search: true,
+		list: true,
+	),
+	country: field (
+		type: 'virtual',
+		title: 'Land',
+		label: fn($r) => visitor::lookup($r->IP)?->country ?? dash,
+		list: false,
+		record: false,
+	),
+	city: field (
+		type: 'virtual',
+		title: 'Stad',
+		label: fn($r) => visitor::lookup($r->IP)?->city ?? dash,
+		list: false,
+		record: false,
+	),
+	created: field (
+		type: 'datetime',
+		title: 'Gezien',
+		list: false,
+	),
+	changed: field (
+		type: 'datetime',
+		title: 'Laatst actief',
+	),
+)
+
+<style>
+@font-face {
+	font-family: 'FlagEmoji'
+	font-display: swap
+	src: url('/flags.woff2') format('woff2')
+}
+.flag {
+	font-family: 'FlagEmoji', system-ui, sans-serif
+	margin-right: .15rem
+}
+.untracked {
+	color: $muted
+	font-style: italic
+	opacity: .75
+}
+.ref-search {
+	color: $primary
+	font-weight: 600
+}
+.vkind {
+	border-radius: 999px
+	font-size: .72em
+	font-weight: 600
+	padding: .12rem .5rem
+	text-transform: capitalize
+}
+.vkind.real {
+	background: color-mix(in srgb, $success 22%, transparent)
+	color: $success
+}
+.vkind.bot {
+	background: color-mix(in srgb, $warn 22%, transparent)
+	color: $warn
+}
+.vkind.untracked {
+	background: color-mix(in srgb, $muted 25%, transparent)
+	color: $muted
+}
+</style>
