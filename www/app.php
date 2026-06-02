@@ -7,7 +7,7 @@ phlo_app (
 	build: true,
 	debug: true,
 	dashboard: 'phlo',
-	app: '/srv/control/',
+	app: '/srv/control/dashboard/',
 	websocket: 3001,
 	files: '/srv/control/files/',
 	images: '/srv/control/files/images/',

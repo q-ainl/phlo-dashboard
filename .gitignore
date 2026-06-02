@@ -1,10 +1,10 @@
 # Lokale agent state
 .claude/
 .codex/
-.agents/
 .local/
+.agents/
 
-# Secrets en runtime
+# Secrets + runtime
 data/auth.ini
 data/creds.ini
 data/cookies.txt
@@ -14,53 +14,18 @@ data/bi.json
 data/cache/
 data/locks/
 
-# Build output (folder behouden via .gitkeep)
+# Build-output (map behouden via .gitkeep)
 php/*
 !php/.gitkeep
-release/*
-!release/.gitkeep
-
-# Build assets (gegenereerd door Phlo)
 www/app.css
 www/app.js
 www/worker.js
-
-# Third-party WebDAV mount
-files/
-
-# Adminer composer artifacts (optioneel; adminer.php zelf wel committen)
-www/q/vendor/
-www/q/composer.json
-www/q/composer.lock
-
-# Backups + screenshots + OS
-bak/
-*.log
-*.tmp
-*.tmp.*
-*.swp
-.DS_Store
-screenshot*.png
-screenshot*.jpg
-
-# Codex placeholder file
-.codex
-
-# Geconsolideerde engine + sidecars (eigen/externe repos)
-phlo/
-websocket/
-whatsapp/
-cms/
-
-# Backups (bevat oude secrets) + losse CMS-library (eigen repo q-ainl/phlo-cms)
-backups/
-CMS/
-conf/
-
-# Host-specifiek + build-output (niet in dashboard-repo)
-bin/
-sites/
-www/q/
 www/icons.png
 www/theme.*.css
 www/trans.*.css
+www/q/
+
+# OS
+*.log
+*.tmp
+.DS_Store

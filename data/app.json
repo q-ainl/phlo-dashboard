@@ -77,8 +77,8 @@
     ],
     "paths": {
         "resources": [
-            "%app/CMS/"
+            "/srv/control/CMS/"
         ]
     },
-    "icons": "%app/CMS/icons/"
+    "icons": "/srv/control/CMS/icons/"
 }
