@@ -38,8 +38,13 @@ static nodes {
 
 static actions => ['errors-reset', 'rebuild', 'ws-restart']
 
-static runAction($command){
+static runAction($command, $app = void){
 	if ($command === 'errors-reset'){
+		if ($app !== void && $app !== ''){
+			if (!preg_match('/^[a-z0-9._-]+$/i', (string)$app) || str_contains((string)$app, '..')) return 'ongeldige app'
+			$path = $app === 'dashboard' ? data.'errors.json' : '/srv/'.$app.'/data/errors.json'
+			return @file_put_contents($path, '{}') !== false ? 'errors van '.$app.' gewist' : 'kon errors niet wissen'
+		}
 		$n = 0
 		foreach (glob('/srv/*/data/errors.json') AS $f) if (@file_put_contents($f, '{}') !== false) $n++
 		@file_put_contents(data.'errors.json', '{}')
@@ -56,24 +61,25 @@ static runAction($command){
 	return 'onbekende actie'
 }
 
-static authManage($command){
+static authManage($command, $app = void){
 	$time = (int)($_SERVER['HTTP_X_FLEET_TIME'] ?? 0)
 	$sign = (string)($_SERVER['HTTP_X_FLEET_SIGN'] ?? void)
 	if (!$time || $sign === void || abs(time() - $time) > 300) return false
 	$peers = static::peers()
 	if (!$peers) return false
+	$payload = $time.'.'.$command.'.'.(string)$app
 	foreach ($peers AS $name => $peer){
 		if (((string)($peer->manage ?? void)) !== '1') continue
 		$secret = (string)($peer->secret ?? void)
 		if ($secret === void) continue
-		if (hash_equals(hash_hmac('sha256', $time.'.'.$command, $secret), $sign)) return $name
+		if (hash_equals(hash_hmac('sha256', $payload, $secret), $sign)) return $name
 	}
 	return false
 }
 
-static manage($node, $command){
+static manage($node, $command, $app = void){
 	if (!in_array($command, static::actions())) return ['ok' => false, 'msg' => 'ongeldige actie']
-	if ($node === 'local') return ['ok' => true, 'msg' => static::runAction($command)]
+	if ($node === 'local') return ['ok' => true, 'msg' => static::runAction($command, $app)]
 	$peer = static::peers()?->$node ?? null
 	if (!$peer) return ['ok' => false, 'msg' => 'onbekende node']
 	if (((string)($peer->mode ?? 'pull')) !== 'pull') return ['ok' => false, 'msg' => 'niet beschikbaar voor headless node']
@@ -81,9 +87,9 @@ static manage($node, $command){
 	$secret = (string)($peer->secret ?? void)
 	if ($url === void || $secret === void) return ['ok' => false, 'msg' => 'geen creds']
 	$time = (string)time()
-	$headers = ['X-Fleet-Time: '.$time, 'X-Fleet-Sign: '.hash_hmac('sha256', $time.'.'.$command, $secret)]
+	$headers = ['X-Fleet-Time: '.$time, 'X-Fleet-Sign: '.hash_hmac('sha256', $time.'.'.$command.'.'.(string)$app, $secret)]
 	try {
-		$res = json_decode((string)HTTP($url.'/fleet/manage', $headers, true, ['command' => $command]), true)
+		$res = json_decode((string)HTTP($url.'/fleet/manage', $headers, true, ['command' => $command, 'app' => (string)$app]), true)
 		return is_array($res) ? $res : ['ok' => false, 'msg' => 'geen antwoord']
 	}
 	catch (\Throwable $e){
@@ -106,15 +112,16 @@ route POST fleet manage {
 	%security->api
 	%res->type = 'application/json'
 	$command = (string)(%payload->command ?? void)
-	if (!static::authManage($command) || !in_array($command, static::actions())){
+	$app = (string)(%payload->app ?? void)
+	if (!static::authManage($command, $app) || !in_array($command, static::actions())){
 		%res->body = json_encode(['ok' => false, 'msg' => 'unauthorized'])
 		return %res->render(401)
 	}
-	%res->body = json_encode(['ok' => true, 'msg' => static::runAction($command)])
+	%res->body = json_encode(['ok' => true, 'msg' => static::runAction($command, $app)])
 	return %res->render()
 }
 
-route async POST manage $node $command {
-	$res = fleet::manage($node, $command)
+route async POST manage $node $command $app= {
+	$res = fleet::manage($node, $command, $app)
 	return ($res['ok'] ?? false) ? apply(toast: '✓ '.($res['msg'] ?? 'klaar')) : apply(error: ($res['msg'] ?? 'mislukt'))
 }

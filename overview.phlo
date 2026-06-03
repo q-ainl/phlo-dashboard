@@ -83,19 +83,27 @@ static sitesTable($apps){
 	return tag('div', tag('table', tag('thead', $head).tag('tbody', $body)), class: 'st-scroll')
 }
 
-static errorsBlock($errs){
+static errRow($x, $app, $node, $canManage){
+	$num = tag('span', (int)($x['unique'] ?? 0).'u / '.(int)($x['occurrences'] ?? 0).'occ', class: 'err-num')
+	$reset = $canManage ? tag('button', '✕', type: 'button', data_post: '/manage/'.$node.'/errors-reset/'.$app, data_confirm: 'Errors van '.$app.' wissen?', title: 'Reset errors', class: 'err-reset') : void
+	return tag('div', tag('span', $app, class: 'err-app').tag('span', $num.$reset, class: 'err-right'), class: 'err-row')
+}
+
+static errorsBlock($errs, $node, $canManage){
 	$total = 0
 	foreach ($errs AS $x) $total += (int)($x['occurrences'] ?? 0)
 	$h = tag('div', static::icon('alert', 14, $total ? 'error' : 'muted').tag('span', 'Errors ('.$total.')'), class: 'err-head')
 	if (!$errs) return tag('div', $h.tag('div', 'geen fouten', class: 'err-none'), class: 'err-block')
-	$rows = loop($errs, fn($x, $app) => tag('div', tag('span', $app, class: 'err-app').tag('span', (int)($x['unique'] ?? 0).'u / '.(int)($x['occurrences'] ?? 0).'occ', class: 'err-num'), class: 'err-row'), void)
+	$rows = loop($errs, fn($x, $app) => static::errRow($x, $app, $node, $canManage), void)
 	return tag('div', $h.tag('div', $rows, class: 'err-list'), class: 'err-block')
 }
 
 static serverPanel($feed){
 	$left = static::metricCard($feed)
 	if (!($feed['ok'] ?? false)) return tag('section', tag('div', $left, class: 'np-cols'), class: 'node-panel off')
-	$right = tag('div', static::sitesTable($feed['apps'] ?? []).static::errorsBlock($feed['errors'] ?? []), class: 'np-right')
+	$node = $feed['node'] ?? 'local'
+	$canManage = in_array($feed['mode'] ?? '', ['self', 'pull'])
+	$right = tag('div', static::sitesTable($feed['apps'] ?? []).static::errorsBlock($feed['errors'] ?? [], $node, $canManage), class: 'np-right')
 	return tag('section', tag('div', $left.$right, class: 'np-cols'), class: 'node-panel')
 }
 
@@ -440,10 +448,29 @@ route both GET overview {
 	justify-content: space-between
 }
 .err-app: color: $text
+.err-right {
+	align-items: center
+	display: flex
+	gap: .5rem
+}
 .err-num {
 	color: $error
 	font-family: monospace
 	white-space: nowrap
+}
+.err-reset {
+	background: transparent
+	border: 1px solid $border
+	border-radius: 5px
+	color: $muted
+	cursor: pointer
+	font-size: .7rem
+	line-height: 1
+	padding: .1rem .35rem
+}
+.err-reset:hover {
+	border-color: $error
+	color: $error
 }
 .err-none {
 	color: $success
