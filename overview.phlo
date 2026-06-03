@@ -1,3 +1,29 @@
+static groupApps($feedApps){
+	$g = []
+	$best = []
+	foreach ($feedApps AS $a){
+		$name = (string)($a['app'] ?? '')
+		$env = (string)($a['env'] ?? 'prod')
+		$host = (string)($a['host'] ?? '')
+		$code = (int)($a['code'] ?? 0)
+		if (!isset($g[$name])) $g[$name] = ['name' => $name, 'dev' => null, 'stage' => null, 'prod' => null]
+		$key = $name.'|'.$env
+		$redirCur = isset($best[$key]) && $best[$key] >= 300 && $best[$key] < 400
+		$redirNew = $code >= 300 && $code < 400
+		if (($g[$name][$env] ?? null) === null || ($redirCur && !$redirNew)){
+			$g[$name][$env] = $host
+			$best[$key] = $code
+		}
+	}
+	return array_values($g)
+}
+
+static statusMap($feedApps){
+	$s = []
+	foreach ($feedApps AS $a) $s[$a['host']] = obj(code: (int)($a['code'] ?? 0), authed: in_array((int)($a['code'] ?? 0), [401, 403]), time_ms: (int)($a['ms'] ?? 0))
+	return $s
+}
+
 static icons => [
 	'activity' => '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
 	'server' => '<rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/>',
@@ -5,9 +31,12 @@ static icons => [
 	'harddrive' => '<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/>',
 	'clock' => '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
 	'globe' => '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
-	'alert' => '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
-	'refresh' => '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
 	'users' => '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+	'check' => '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+	'x' => '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+	'alert' => '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+	'lock' => '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+	'refresh' => '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
 ]
 
 static icon($name, $size = 16, $class = void) => '<svg class="ic'.($class ? ' '.$class : void).'" width="'.$size.'" height="'.$size.'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'.(static::icons()[$name] ?? void).'</svg>'
@@ -24,107 +53,82 @@ static bar($label, $pct, $ic, $variant, $detail){
 	return tag('div', $top.$track, class: 'pb '.$level)
 }
 
+static actionBtn($node, $command, $label) => tag('button', $label, type: 'button', data_post: '/manage/'.$node.'/'.$command, data_confirm: $label.' op '.$node.'?', class: 'mg-btn')
+
+static serverCard($label, $sub, $m, $footer = void){
+	$titles = tag('div', tag('h2', static::icon('server', 18, 'blue').tag('span', $label), class: 'sw-name').tag('span', $sub, class: 'sw-sub'), class: 'sw-titles')
+	if (!$m) return tag('section', tag('div', $titles.tag('span', tag('span', void, class: 'sw-dot').tag('span', 'offline'), class: 'sw-pill offline'), class: 'sw-head').tag('p', 'niet bereikbaar', class: 'ov-offline'), class: 'sw-card')
+	$pill = tag('span', tag('span', void, class: 'sw-dot').tag('span', 'online'), class: 'sw-pill online')
+	$head = tag('div', $titles.$pill, class: 'sw-head')
+	$uptime = tag('div', static::icon('clock', 20, 'emerald').tag('div', tag('div', 'Uptime', class: 'sw-tile-label').tag('div', age_human($m->uptime_sec ?? 0), class: 'sw-tile-val')), class: 'sw-tile')
+	$bars = static::bar('CPU Load', static::loadPct($m), 'cpu', void, ($m->load1 ?? 0).' / '.($m->cpu_count ?? 0).' cpu').static::bar('Geheugen', static::pct($m->mem_used ?? 0, $m->mem_total ?? 0), 'activity', void, size_human($m->mem_used ?? 0).' / '.size_human($m->mem_total ?? 0)).static::bar('Disk', static::pct($m->disk_used ?? 0, $m->disk_total ?? 0), 'harddrive', 'disk', size_human($m->disk_used ?? 0).' / '.size_human($m->disk_total ?? 0))
+	return tag('section', $head.$uptime.tag('div', $bars, class: 'sw-bars').$footer, class: 'sw-card')
+}
+
 static envState($code){
 	$c = (int)$code
 	if ($c === 0 || $c >= 500) return 'down'
 	if ($c === 401 || $c === 403) return 'auth'
-	if ($c >= 300 && $c < 400) return 'redir'
 	if ($c >= 400) return 'warn'
 	return 'up'
 }
 
-static actionBtn($node, $command, $label) => tag('button', $label, type: 'button', data_post: '/manage/'.$node.'/'.$command, data_confirm: $label.' op '.$node.'?', class: 'np-btn')
-
-static metricCard($feed){
-	$m = (object)($feed['metrics'] ?? [])
-	$label = $feed['label'] ?? ($feed['server'] ?? '?')
-	$online = $feed['ok'] ?? false
-	$pill = tag('span', tag('span', void, class: 'sw-dot').tag('span', $online ? 'online' : 'offline'), class: 'sw-pill '.($online ? 'online' : 'offline'))
-	$titles = tag('div', tag('span', $label, class: 'sw-name').tag('span', ($feed['server'] ?? void).' · Phlo '.($feed['phlo'] ?? '?'), class: 'sw-sub'), class: 'sw-titles')
-	$head = tag('div', tag('div', static::icon('server', 18, 'blue').$titles, class: 'sw-id').$pill, class: 'sw-head')
-	if (!$online) return tag('div', $head.tag('p', 'niet bereikbaar', class: 'sw-offline'), class: 'sw-card metric-card')
-	$uptime = tag('div', static::icon('clock', 16, 'emerald').tag('div', tag('div', 'Uptime', class: 'sw-tile-label').tag('div', age_human($m->uptime_sec ?? 0), class: 'sw-tile-val')), class: 'sw-tile')
-	$vis = $feed['visitors'] ?? null
-	$visTile = $vis === null ? void : tag('div', static::icon('users', 16, 'blue').tag('div', tag('div', 'Bezoekers', class: 'sw-tile-label').tag('div', number_format((int)$vis, 0, ',', '.'), class: 'sw-tile-val')), class: 'sw-tile')
-	$uptime = tag('div', $uptime.$visTile, class: 'sw-tiles')
-	$bars = static::bar('CPU Load', static::loadPct($m), 'cpu', void, ($m->load1 ?? 0).' / '.($m->cpu_count ?? 0).' cpu').static::bar('Geheugen', static::pct($m->mem_used ?? 0, $m->mem_total ?? 0), 'activity', void, size_human($m->mem_used ?? 0).' / '.size_human($m->mem_total ?? 0)).static::bar('Disk', static::pct($m->disk_used ?? 0, $m->disk_total ?? 0), 'harddrive', 'disk', size_human($m->disk_used ?? 0).' / '.size_human($m->disk_total ?? 0))
-	$node = $feed['node'] ?? 'local'
-	$actions = in_array($feed['mode'] ?? '', ['self', 'pull']) ? tag('div', static::actionBtn($node, 'errors-reset', 'Errors wissen').static::actionBtn($node, 'rebuild', 'Rebuild').static::actionBtn($node, 'ws-restart', 'WS herstart'), class: 'np-actions') : void
-	return tag('div', $head.$uptime.tag('div', $bars, class: 'sw-bars').$actions, class: 'sw-card metric-card')
+static envChip($label, $host, $status){
+	$st = $status[$host] ?? null
+	if (!$st) return tag('div', tag('span', $label, class: 'ping-label').tag('span', dash, class: 'ping-main empty'), class: 'ping')
+	$state = static::envState($st->code)
+	$lock = $st->authed ? static::icon('lock', 11, 'lock') : void
+	$main = tag('span', void, class: 'st-dot '.$state).tag('span', (int)$st->code ?: 'down', class: 'ping-code').$lock
+	$inner = tag('span', $label, class: 'ping-label').tag('span', $main, class: 'ping-main '.$state).tag('span', $st->time_ms.'ms', class: 'ping-ms')
+	return tag('a', $inner, href: 'https://'.$host.'/', target: '_blank', class: 'ping', title: 'Open '.$host)
 }
 
-static siteRow($a){
-	$state = static::envState($a['code'] ?? 0)
-	$code = (int)($a['code'] ?? 0)
-	$status = tag('span', void, class: 'st-dot '.$state).tag('span', $code ?: 'down', class: 'ping-code')
-	$name = tag('td', tag('a', $a['host'], href: 'https://'.$a['host'].'/', target: '_blank', class: 'site-link'), class: 'site-name')
-	$env = tag('td', tag('span', strtoupper($a['env'] ?? ''), class: 'env-tag '.($a['env'] ?? '')), class: 'c')
-	$st = tag('td', tag('span', $status, class: 'ping-main '.$state).tag('span', ($a['ms'] ?? 0).'ms', class: 'ping-ms'), class: 'c')
-	return tag('tr', $name.$env.$st)
+static appRow($app, $status, $visitors, $node, $errors, $canManage){
+	$primary = $app['prod'] ?? $app['stage'] ?? $app['dev'] ?? ''
+	$vis = (int)($visitors[$primary] ?? 0)
+	$down = 0
+	foreach (['dev', 'stage', 'prod'] AS $e) if (($app[$e] ?? null) && ($s = $status[$app[$e]] ?? null) && static::envState($s->code) === 'down') $down++
+	$errOcc = (int)($errors[$app['name']]['occurrences'] ?? 0)
+	$icon = ($down || $errOcc) ? static::icon('x', 18, 'error') : static::icon('check', 18, 'emerald')
+	$name = tag('td', tag('a', $icon.tag('span', $app['name'], class: 'app-label'), href: 'https://'.$primary.'/', target: '_blank', class: 'app-link'), class: 'app-name')
+	$v = tag('td', tag('span', static::icon('users', 15, 'blue').tag('span', $vis, class: 'vis-num'), class: 'vis'), class: 'c')
+	$box = tag('div', static::envChip('DEV', $app['dev'], $status).tag('div', void, class: 'ping-div').static::envChip('STAGE', $app['stage'], $status).tag('div', void, class: 'ping-div').static::envChip('PROD', $app['prod'], $status), class: 'ping-box')
+	$reset = $canManage && $errOcc ? tag('button', '✕', type: 'button', data_post: '/manage/'.$node.'/errors-reset/'.$app['name'], data_confirm: 'Errors van '.$app['name'].' wissen?', title: 'Reset errors', class: 'err-reset') : void
+	$errCell = tag('td', $errOcc ? tag('span', static::icon('alert', 13).tag('span', $errOcc), class: 'err-badge').$reset : tag('span', '0', class: 'err-zero'), class: 'c')
+	return tag('tr', $name.$v.tag('td', $box, class: 'c').$errCell)
 }
 
-static groupAliases($apps){
-	$groups = []
-	foreach ($apps AS $a){
-		$base = preg_replace('/^www\./', '', (string)($a['host'] ?? ''))
-		$a['host'] = $base
-		$cur = $groups[$base] ?? null
-		if (!$cur){
-			$groups[$base] = $a
-			continue
-		}
-		$curRedir = (int)$cur['code'] >= 300 && (int)$cur['code'] < 400
-		$newRedir = (int)$a['code'] >= 300 && (int)$a['code'] < 400
-		if ($curRedir && !$newRedir) $groups[$base] = $a
-	}
-	return array_values($groups)
+static appTable($apps, $status, $visitors, $node, $errors, $canManage){
+	$head = tag('tr', tag('th', 'Applicatie').tag('th', 'Bezoekers', class: 'c').tag('th', 'Dev / Stage / Prod', class: 'c').tag('th', 'Errors', class: 'c'))
+	$body = loop($apps, fn($app) => static::appRow($app, $status, $visitors, $node, $errors, $canManage), void)
+	$tbl = tag('table', tag('thead', $head).tag('tbody', $body))
+	$badge = tag('span', count($apps).' actief', class: 'st-badge')
+	$h = tag('div', tag('h2', static::icon('globe', 20, 'blue').tag('span', 'Gemonitorde sites'), class: 'st-title').$badge, class: 'st-head')
+	return tag('section', $h.tag('div', $tbl, class: 'st-scroll'), class: 'sw-card st-card')
 }
 
-static sitesTable($apps){
-	if (!$apps) return tag('p', 'geen sites', class: 'sw-offline')
-	$head = tag('tr', tag('th', 'Applicatie').tag('th', 'Env', class: 'c').tag('th', 'Status', class: 'c'))
-	$body = loop(static::groupAliases($apps), fn($a) => static::siteRow($a), void)
-	return tag('div', tag('table', tag('thead', $head).tag('tbody', $body)), class: 'st-scroll')
-}
-
-static errRow($x, $app, $node, $canManage){
-	$num = tag('span', (int)($x['unique'] ?? 0).'u / '.(int)($x['occurrences'] ?? 0).'occ', class: 'err-num')
-	$reset = $canManage ? tag('button', '✕', type: 'button', data_post: '/manage/'.$node.'/errors-reset/'.$app, data_confirm: 'Errors van '.$app.' wissen?', title: 'Reset errors', class: 'err-reset') : void
-	return tag('div', tag('span', $app, class: 'err-app').tag('span', $num.$reset, class: 'err-right'), class: 'err-row')
-}
-
-static errorsBlock($errs, $node, $canManage){
-	$total = 0
-	foreach ($errs AS $x) $total += (int)($x['occurrences'] ?? 0)
-	$h = tag('div', static::icon('alert', 14, $total ? 'error' : 'muted').tag('span', 'Errors ('.$total.')'), class: 'err-head')
-	if (!$errs) return tag('div', $h.tag('div', 'geen fouten', class: 'err-none'), class: 'err-block')
-	$rows = loop($errs, fn($x, $app) => static::errRow($x, $app, $node, $canManage), void)
-	return tag('div', $h.tag('div', $rows, class: 'err-list'), class: 'err-block')
-}
-
-static serverPanel($feed){
-	$left = static::metricCard($feed)
-	if (!($feed['ok'] ?? false)) return tag('section', tag('div', $left, class: 'np-cols'), class: 'node-panel off')
-	$node = $feed['node'] ?? 'local'
+static serverBlock($node){
+	$feed = fleet::cached($node) ?: ['label' => $node, 'ok' => false]
+	$label = $feed['label'] ?? $node
+	$ok = $feed['ok'] ?? false
 	$canManage = in_array($feed['mode'] ?? '', ['self', 'pull'])
-	$right = tag('div', static::sitesTable($feed['apps'] ?? []).static::errorsBlock($feed['errors'] ?? [], $node, $canManage), class: 'np-right')
-	return tag('section', tag('div', $left.$right, class: 'np-cols'), class: 'node-panel')
-}
-
-static panels {
-	$out = void
-	foreach (fleet::nodes() AS $node) $out .= static::serverPanel(fleet::cached($node) ?: ['label' => $node, 'ok' => false])
-	return $out
+	$m = $ok ? (object)($feed['metrics'] ?? []) : null
+	$sub = $ok ? ('Phlo '.($feed['phlo'] ?? '?')) : 'niet bereikbaar'
+	$footer = $ok && $canManage ? tag('div', static::actionBtn($node, 'rebuild', 'Rebuild').static::actionBtn($node, 'ws-restart', 'WS herstart').static::actionBtn($node, 'errors-reset', 'Errors wissen'), class: 'mg-actions') : void
+	$card = tag('div', static::serverCard($feed['server'] ?? $label, $sub, $m, $footer), class: 'dash-servers')
+	$sites = $ok ? tag('div', static::appTable(static::groupApps($feed['apps'] ?? []), static::statusMap($feed['apps'] ?? []), $feed['visitors'] ?? [], $node, $feed['errors'] ?? [], $canManage), class: 'dash-sites') : void
+	return tag('section', tag('h2', $label, class: 'srv-title').tag('div', $card.$sites, class: 'dash-cols'), class: 'srv-block')
 }
 
 route both GET overview {
 	%app->active = 'overview'
+	$blocks = loop(fleet::nodes(), fn($node) => static::serverBlock($node), void)
 	$local = fleet::cached('local')
-	$polled = $local ? date('H:i:s', (int)($local['polled'] ?? $local['time'] ?? 0)) : 'n.v.t.'
-	$titleBlock = tag('div', tag('h1', static::icon('activity', 26, 'blue').tag('span', 'Fleet Dashboard', class: 'grad'), class: 'dash-title').tag('p', 'Servers en applicaties over de hele fleet', class: 'dash-sub'))
+	$polled = $local ? date('H:i:s', (int)($local['polled'] ?? $local['time'] ?? 0)) : '-'
+	$titleBlock = tag('div', tag('h1', static::icon('activity', 26, 'blue').tag('span', 'Fleet Dashboard', class: 'grad'), class: 'dash-title').tag('p', 'Real-time monitoring van alle servers', class: 'dash-sub'))
 	$update = tag('div', static::icon('refresh', 16, 'muted').tag('span', 'Laatste poll: '.tag('span', $polled, class: 'upd-time')), class: 'dash-update')
 	$head = tag('header', $titleBlock.$update, class: 'dash-head')
-	main(tag('div', $head.tag('div', static::panels(), class: 'node-list'), class: 'dash'), 'Overzicht')
+	main(tag('div', $head.$blocks, class: 'dash'), 'Overzicht')
 }
 
 <style>
@@ -137,12 +141,14 @@ route both GET overview {
 .ic.emerald: color: $success
 .ic.muted: color: $muted
 .ic.error: color: $error
+.ic.purple: color: #a855f7
+.ic.lock: color: $muted
 .dash {
 	display: flex
 	flex-direction: column
 	gap: 1.5rem
 	margin: 0 auto
-	max-width: 1500px
+	max-width: 1400px
 	padding: 1rem .25rem 2rem
 }
 .dash-head {
@@ -185,26 +191,25 @@ route both GET overview {
 	color: $text
 	font-family: monospace
 }
-.node-list {
+.dash-cols {
 	display: flex
 	flex-direction: column
 	gap: 1.5rem
 }
-.np-cols {
-	display: flex
-	flex-direction: column
-	gap: 1.25rem
+@media(min-width:1100px){
+	.dash-cols: align-items: start
+	.dash-cols: flex-direction: row
+	.dash-servers: max-width: 33%
 }
-@media(min-width:1000px){
-	.np-cols: align-items: stretch
-	.np-cols: flex-direction: row
-	.metric-card: flex: 0 0 320px
-}
-.np-right {
+.dash-servers {
 	display: flex
 	flex-direction: column
 	flex: 1 1 0
-	gap: 1rem
+	gap: 1.5rem
+	min-width: 300px
+}
+.dash-sites {
+	flex: 1 1 0
 	min-width: 0
 }
 .sw-card {
@@ -214,35 +219,34 @@ route both GET overview {
 	box-shadow: 0 10px 25px #0006
 	display: flex
 	flex-direction: column
-	gap: 1.1rem
+	gap: 1.25rem
 	padding: 1.25rem
 }
-.node-panel.off .metric-card: opacity: .6
 .sw-head {
 	align-items: flex-start
 	display: flex
 	gap: .5rem
 	justify-content: space-between
 }
-.sw-id {
-	align-items: center
-	display: flex
-	gap: .5rem
-}
 .sw-titles {
 	display: flex
 	flex-direction: column
-	gap: .1rem
+	gap: .15rem
 }
 .sw-name {
+	align-items: center
 	color: $text
-	font-size: 1.15rem
+	display: flex
+	font-size: 1.2rem
 	font-weight: 700
+	gap: .5rem
+	margin: 0
 }
+.sw-name .ic: color: $primary
 .sw-sub {
 	color: $muted
 	font-family: monospace
-	font-size: .75rem
+	font-size: .8rem
 }
 .sw-pill {
 	align-items: center
@@ -250,10 +254,10 @@ route both GET overview {
 	border: 1px solid $border
 	border-radius: 999px
 	display: inline-flex
-	font-size: .76rem
-	gap: .4rem
-	padding: .2rem .6rem
-	white-space: nowrap
+	font-size: .8rem
+	gap: .45rem
+	padding: .25rem .7rem
+	text-transform: capitalize
 }
 .sw-dot {
 	animation: dashpulse 2s ease-in-out infinite
@@ -267,14 +271,6 @@ route both GET overview {
 	0%, 100%: opacity: 1
 	50%: opacity: .35
 }
-.sw-tiles {
-	display: flex
-	gap: .75rem
-}
-.sw-tiles .sw-tile {
-	flex: 1 1 0
-	min-width: 0
-}
 .sw-tile {
 	align-items: center
 	background: $bg
@@ -282,12 +278,9 @@ route both GET overview {
 	border-radius: 10px
 	display: flex
 	gap: .75rem
-	padding: .7rem
+	padding: .75rem
 }
-.sw-tile .sw-tile-val {
-	overflow: hidden
-	text-overflow: ellipsis
-}
+.sw-tile .ic: color: $success
 .sw-tile-label {
 	color: $muted
 	font-size: .75rem
@@ -299,19 +292,15 @@ route both GET overview {
 .sw-bars {
 	display: flex
 	flex-direction: column
-	gap: .9rem
-}
-.sw-offline {
-	color: $muted
-	padding: .5rem 0
+	gap: 1rem
 }
 .pb-top {
 	align-items: center
 	color: $muted
 	display: flex
-	font-size: .82rem
+	font-size: .85rem
 	justify-content: space-between
-	margin-bottom: .35rem
+	margin-bottom: .4rem
 }
 .pb-label {
 	align-items: center
@@ -326,7 +315,7 @@ route both GET overview {
 .pb-detail {
 	color: $muted
 	font-family: monospace
-	font-size: .76em
+	font-size: .78em
 }
 .pb-val {
 	color: $text
@@ -335,7 +324,7 @@ route both GET overview {
 .pb-track {
 	background: color-mix(in srgb, $surface 75%, $text)
 	border-radius: 999px
-	height: 7px
+	height: 8px
 	overflow: hidden
 }
 .pb-fill {
@@ -347,76 +336,133 @@ route both GET overview {
 .pb.mid .pb-fill: background: $warn
 .pb.high .pb-fill: background: $error
 .pb.disk .pb-fill: background: #a855f7
-.st-scroll {
-	background: $surface
-	border: 1px solid $border
-	border-radius: 12px
-	box-shadow: 0 10px 25px #0006
-	max-height: 420px
-	overflow: auto
+.st-card {
+	gap: 0
+	overflow: hidden
+	padding: 0
 }
-.st-scroll table {
+.st-head {
+	align-items: center
+	background: color-mix(in srgb, $surface 92%, $text)
+	border-bottom: 1px solid $border
+	display: flex
+	gap: .5rem
+	justify-content: space-between
+	padding: 1.1rem 1.25rem
+}
+.st-title {
+	align-items: center
+	color: $text
+	display: flex
+	font-size: 1.2rem
+	font-weight: 700
+	gap: .5rem
+	margin: 0
+}
+.st-badge {
+	background: color-mix(in srgb, $primary 20%, transparent)
+	border-radius: 999px
+	color: $primary
+	font-size: .72rem
+	font-weight: 600
+	padding: .2rem .6rem
+}
+.st-scroll {
+	overflow-x: auto
+}
+.st-card table {
 	border-collapse: collapse
 	width: 100%
 }
-.st-scroll th {
-	background: color-mix(in srgb, $surface 92%, $text)
+.st-card th {
 	color: $muted
-	font-size: .7rem
+	font-size: .72rem
 	font-weight: 500
 	letter-spacing: .05em
-	padding: .7rem 1rem
-	position: sticky
+	padding: .8rem 1rem
 	text-align: left
 	text-transform: uppercase
-	top: 0
+	white-space: nowrap
 }
-.st-scroll th.c: text-align: center
-.st-scroll td {
+.st-card th.c: text-align: center
+.st-card td {
 	border-top: 1px solid color-mix(in srgb, $border 60%, transparent)
-	padding: .55rem 1rem
+	padding: .7rem 1rem
 	vertical-align: middle
 }
-.st-scroll td.c: text-align: center
-.st-scroll tbody tr:hover: background: color-mix(in srgb, $surface 88%, $text)
-.site-link {
+.st-card td.c: text-align: center
+.st-card tbody tr: transition: background .15s ease
+.st-card tbody tr:hover: background: color-mix(in srgb, $surface 88%, $text)
+.app-link {
+	align-items: center
 	color: $text
+	display: flex
 	font-weight: 600
+	gap: .6rem
 	text-decoration: none
 	white-space: nowrap
 }
-.site-link:hover: color: $primary
-.env-tag {
-	border-radius: 6px
-	font-size: .66rem
-	font-weight: 700
-	padding: .1rem .4rem
+.app-link:hover .app-label: color: $primary
+.vis {
+	align-items: center
+	color: $muted
+	display: inline-flex
+	gap: .4rem
+	justify-content: center
 }
-.env-tag.prod {
-	background: color-mix(in srgb, $success 18%, transparent)
-	color: $success
+.vis-num {
+	color: $text
+	font-family: monospace
 }
-.env-tag.stage {
-	background: color-mix(in srgb, $warn 18%, transparent)
-	color: $warn
+.ping-box {
+	align-items: stretch
+	background: $bg
+	border: 1px solid $border
+	border-radius: 10px
+	display: inline-flex
+	gap: .75rem
+	justify-content: center
+	padding: .5rem .75rem
 }
-.env-tag.dev {
-	background: color-mix(in srgb, $primary 18%, transparent)
-	color: $primary
+.ping-div {
+	background: $border
+	width: 1px
+}
+.ping {
+	align-items: center
+	color: $text
+	display: flex
+	flex-direction: column
+	gap: .15rem
+	min-width: 66px
+	text-decoration: none
+}
+.ping-label {
+	color: $muted
+	font-size: .62rem
+	letter-spacing: .06em
 }
 .ping-main {
 	align-items: center
-	display: inline-flex
+	display: flex
 	font-family: monospace
-	font-size: .82rem
+	font-size: .85rem
 	font-weight: 600
-	gap: .3rem
+	gap: .25rem
 }
 .ping-main.up: color: $success
 .ping-main.auth: color: $primary
-.ping-main.redir: color: $muted
 .ping-main.warn: color: $warn
 .ping-main.down: color: $error
+.ping-main.empty {
+	color: $muted
+	opacity: .4
+}
+.ping-ms {
+	color: $muted
+	font-family: monospace
+	font-size: .65rem
+}
 .st-dot {
 	border-radius: 50%
 	display: inline-block
@@ -426,53 +472,63 @@ route both GET overview {
 }
 .st-dot.up: background: $success
 .st-dot.auth: background: $primary
-.st-dot.redir: background: $muted
 .st-dot.warn: background: $warn
 .st-dot.down: background: $error
-.ping-ms {
-	color: $muted
-	font-family: monospace
-	font-size: .66rem
-	margin-left: .4rem
-}
-.err-block {
-	background: $surface
-	border: 1px solid $border
-	border-radius: 12px
-	display: flex
-	flex-direction: column
-	gap: .5rem
-	padding: 1rem 1.25rem
-}
-.err-head {
+.ping-code: line-height: 1
+.err-badge {
 	align-items: center
-	color: $muted
-	display: flex
-	font-size: .8rem
-	gap: .4rem
-}
-.err-list {
-	display: flex
-	flex-direction: column
-	gap: .3rem
-	max-height: 130px
-	overflow-y: auto
-}
-.err-row {
-	display: flex
-	font-size: .82rem
-	justify-content: space-between
-}
-.err-app: color: $text
-.err-right {
-	align-items: center
-	display: flex
-	gap: .5rem
-}
-.err-num {
+	background: color-mix(in srgb, $error 20%, transparent)
+	border-radius: 999px
 	color: $error
+	display: inline-flex
+	font-weight: 700
+	gap: .3rem
+	padding: .15rem .6rem
+}
+.err-zero {
+	color: $muted
 	font-family: monospace
-	white-space: nowrap
+	opacity: .5
+}
+.ov-offline {
+	color: $muted
+	padding: 1rem 0
+}
+.srv-block {
+	display: flex
+	flex-direction: column
+	gap: 1rem
+}
+.srv-title {
+	align-items: center
+	color: $text
+	display: flex
+	font-size: 1.3rem
+	font-weight: 700
+	gap: .5rem
+	margin: 0
+	padding-left: .25rem
+}
+.mg-actions {
+	border-top: 1px solid color-mix(in srgb, $border 60%, transparent)
+	display: flex
+	flex-wrap: wrap
+	gap: .5rem
+	padding-top: .9rem
+}
+.mg-btn {
+	background: $bg
+	border: 1px solid $border
+	border-radius: 8px
+	color: $muted
+	cursor: pointer
+	font-size: .76rem
+	padding: .35rem .7rem
+	transition: border-color .15s ease, color .15s ease
+}
+.mg-btn:hover {
+	border-color: $primary
+	color: $primary
 }
 .err-reset {
 	background: transparent
@@ -480,37 +536,13 @@ route both GET overview {
 	border-radius: 5px
 	color: $muted
 	cursor: pointer
-	font-size: .7rem
+	font-size: .68rem
 	line-height: 1
-	padding: .1rem .35rem
+	margin-left: .4rem
+	padding: .1rem .3rem
 }
 .err-reset:hover {
 	border-color: $error
 	color: $error
-}
-.err-none {
-	color: $success
-	font-size: .82rem
-}
-.np-actions {
-	border-top: 1px solid color-mix(in srgb, $border 60%, transparent)
-	display: flex
-	flex-wrap: wrap
-	gap: .5rem
-	padding-top: .9rem
-}
-.np-btn {
-	background: $bg
-	border: 1px solid $border
-	border-radius: 8px
-	color: $text
-	cursor: pointer
-	font-size: .78rem
-	padding: .4rem .7rem
-	transition: border-color .15s ease, color .15s ease
-}
-.np-btn:hover {
-	border-color: $primary
-	color: $primary
 }
 </style>

@@ -35,14 +35,14 @@ function fleet_ping(array $hosts, bool $local = false): array {
 	return $out;
 }
 
-function fleet_visitors($db): ?int {
-	if (!is_array($db) || empty($db['host']) || empty($db['database'])) return null;
+function fleet_visitors($db): array {
+	if (!is_array($db) || empty($db['host']) || empty($db['database'])) return [];
 	try {
 		$pdo = new PDO('mysql:host='.$db['host'].';dbname='.$db['database'], (string)($db['user'] ?? ''), (string)($db['password'] ?? ''), [PDO::ATTR_TIMEOUT => 3, PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-		return (int)$pdo->query('SELECT COUNT(DISTINCT token) FROM visitors')->fetchColumn();
+		return array_map('intval', $pdo->query('SELECT host, COUNT(DISTINCT token) c FROM visitors GROUP BY host')->fetchAll(PDO::FETCH_KEY_PAIR));
 	}
 	catch (\Throwable $e){
-		return null;
+		return [];
 	}
 }
 
