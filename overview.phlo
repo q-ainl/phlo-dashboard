@@ -74,7 +74,7 @@ static envState($code){
 }
 
 static envChip($label, $host, $status){
-	$st = $status[$host] ?? null
+	$st = $host ? ($status[$host] ?? null) : null
 	if (!$st) return tag('div', tag('span', $label, class: 'ping-label').tag('span', dash, class: 'ping-main empty'), class: 'ping')
 	$state = static::envState($st->code)
 	$lock = $st->authed ? static::icon('lock', 11, 'lock') : void

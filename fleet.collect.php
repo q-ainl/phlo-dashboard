@@ -1,5 +1,15 @@
 <?php
 
+# Control base, derived (no hardcoded /srv vs /files/Server): the dir holding
+# this dashboard. dirname(__DIR__) works in-app and when run as a file; when the
+# script is piped over SSH stdin (__DIR__ unreliable) the poller passes the base
+# as the first absolute-path arg.
+function fleet_base(): string {
+	$arg = $_SERVER['argv'][1] ?? '';
+	if (is_string($arg) && $arg !== '' && $arg[0] === '/') return rtrim($arg, '/');
+	return dirname(__DIR__);
+}
+
 function fleet_ping(array $hosts, bool $local = false): array {
 	$hosts = array_values(array_unique($hosts));
 	if (!$hosts || !function_exists('curl_multi_init')) return [];
@@ -54,7 +64,7 @@ function fleet_env(string $block): string {
 
 function fleet_caddy_apps(): array {
 	$apps = [];
-	foreach (glob('/srv/control/sites/*.caddy') as $file){
+	foreach (glob(fleet_base().'/sites/*.caddy') as $file){
 		$appName = basename($file, '.caddy');
 		$blocks = [];
 		$hosts = null;
@@ -86,7 +96,7 @@ function fleet_collect(): array {
 	$apps = fleet_caddy_apps();
 
 	$errors = [];
-	foreach (glob('/srv/*/data/errors.json') as $file){
+	foreach (glob(dirname(fleet_base()).'/*/data/errors.json') as $file){
 		$data = json_decode((string)@file_get_contents($file), true);
 		if (!is_array($data) || !$data) continue;
 		$occ = 0;
@@ -110,9 +120,9 @@ function fleet_collect(): array {
 	$uptime = (int)(float)strtok((string)@file_get_contents('/proc/uptime'), ' ');
 
 	$version = '?';
-	if (preg_match("/const phlo\\s*=\\s*'([^']+)'/", (string)@file_get_contents('/srv/control/phlo/phlo.php'), $vm)) $version = $vm[1];
+	if (preg_match("/const phlo\\s*=\\s*'([^']+)'/", (string)@file_get_contents(fleet_base().'/phlo/phlo.php'), $vm)) $version = $vm[1];
 
-	$ini = @parse_ini_file('/srv/control/dashboard/data/creds.ini', true, INI_SCANNER_RAW);
+	$ini = @parse_ini_file(fleet_base().'/dashboard/data/creds.ini', true, INI_SCANNER_RAW);
 	$visitors = fleet_visitors(is_array($ini) ? ($ini['mysql'] ?? null) : null);
 
 	return [

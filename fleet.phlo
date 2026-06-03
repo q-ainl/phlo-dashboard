@@ -39,14 +39,15 @@ static nodes {
 static actions => ['errors-reset', 'rebuild', 'ws-restart']
 
 static runAction($command, $app = void){
+	$appsBase = dirname(dirname(rtrim(app, '/')))
 	if ($command === 'errors-reset'){
 		if ($app !== void && $app !== ''){
 			if (!preg_match('/^[a-z0-9._-]+$/i', (string)$app) || str_contains((string)$app, '..')) return 'ongeldige app'
-			$path = $app === 'dashboard' ? data.'errors.json' : '/srv/'.$app.'/data/errors.json'
+			$path = $app === 'dashboard' ? data.'errors.json' : $appsBase.'/'.$app.'/data/errors.json'
 			return @file_put_contents($path, '{}') !== false ? 'errors van '.$app.' gewist' : 'kon errors niet wissen'
 		}
 		$n = 0
-		foreach (glob('/srv/*/data/errors.json') AS $f) if (@file_put_contents($f, '{}') !== false) $n++
+		foreach (glob($appsBase.'/*/data/errors.json') AS $f) if (@file_put_contents($f, '{}') !== false) $n++
 		@file_put_contents(data.'errors.json', '{}')
 		return $n.' errorbestanden gewist'
 	}
