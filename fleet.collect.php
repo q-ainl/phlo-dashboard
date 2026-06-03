@@ -35,19 +35,44 @@ function fleet_ping(array $hosts, bool $local = false): array {
 	return $out;
 }
 
-function fleet_collect(): array {
+function fleet_env(string $block): string {
+	if (str_contains($block, 'phlo_dev')) return 'dev';
+	if (str_contains($block, 'phlo_stage')) return 'stage';
+	return 'prod';
+}
+
+function fleet_caddy_apps(): array {
 	$apps = [];
 	foreach (glob('/srv/control/sites/*.caddy') as $file){
-		if (!preg_match_all('/^([a-z0-9*][^{(\n]*)\{/m', (string)@file_get_contents($file), $m)) continue;
-		foreach ($m[1] as $line){
-			foreach (explode(',', $line) as $host){
+		$appName = basename($file, '.caddy');
+		$blocks = [];
+		$hosts = null;
+		$buf = '';
+		foreach (explode("\n", (string)@file_get_contents($file)) as $line){
+			if (preg_match('/^([a-z0-9*][^{(\n]*?)\s*\{/', $line, $m)){
+				if ($hosts !== null) $blocks[] = ['hosts' => $hosts, 'block' => $buf];
+				$hosts = trim($m[1]);
+				$buf = $line."\n";
+			} elseif ($hosts !== null){
+				$buf .= $line."\n";
+			}
+		}
+		if ($hosts !== null) $blocks[] = ['hosts' => $hosts, 'block' => $buf];
+		foreach ($blocks as $b){
+			$env = fleet_env($b['block']);
+			foreach (explode(',', $b['hosts']) as $host){
 				$host = trim($host);
-				if (!$host || !str_contains($host, '.')) continue;
-				$env = str_starts_with($host, 'dev.') ? 'dev' : (str_starts_with($host, 'stage.') ? 'stage' : 'prod');
-				$apps[] = ['host' => $host, 'env' => $env, 'app' => basename($file, '.caddy')];
+				if ($host === '' || !str_contains($host, '.')) continue;
+				$he = str_starts_with($host, 'dev.') ? 'dev' : (str_starts_with($host, 'stage.') ? 'stage' : $env);
+				$apps[] = ['host' => $host, 'env' => $he, 'app' => $appName];
 			}
 		}
 	}
+	return $apps;
+}
+
+function fleet_collect(): array {
+	$apps = fleet_caddy_apps();
 
 	$errors = [];
 	foreach (glob('/srv/*/data/errors.json') as $file){
