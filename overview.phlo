@@ -23,39 +23,59 @@ static bar($label, $pct, $ic, $variant, $detail){
 	return tag('div', $top.$track, class: 'pb '.$level)
 }
 
-static envChips($apps){
-	$env = []
-	foreach ($apps AS $a) $env[$a['env']] = ($env[$a['env']] ?? 0) + 1
-	$chips = void
-	foreach (['prod', 'stage', 'dev'] AS $e) if ($env[$e] ?? 0) $chips .= tag('span', strtoupper($e).' '.$env[$e], class: 'np-env '.$e)
-	return $chips
+static envState($code){
+	$c = (int)$code
+	if ($c === 0 || $c >= 500) return 'down'
+	if ($c === 401 || $c === 403) return 'auth'
+	if ($c >= 300 && $c < 400) return 'redir'
+	if ($c >= 400) return 'warn'
+	return 'up'
 }
 
-static errRows($errs){
-	if (!$errs) return tag('div', 'geen fouten', class: 'np-err-none')
-	return loop($errs, fn($x, $app) => tag('div', tag('span', $app, class: 'np-err-app').tag('span', (int)($x['unique'] ?? 0).'u / '.(int)($x['occurrences'] ?? 0).'occ', class: 'np-err-num'), class: 'np-err-row'), void)
+static metricCard($feed){
+	$m = (object)($feed['metrics'] ?? [])
+	$label = $feed['label'] ?? ($feed['server'] ?? '?')
+	$online = $feed['ok'] ?? false
+	$pill = tag('span', tag('span', void, class: 'sw-dot').tag('span', $online ? 'online' : 'offline'), class: 'sw-pill '.($online ? 'online' : 'offline'))
+	$titles = tag('div', tag('span', $label, class: 'sw-name').tag('span', ($feed['server'] ?? void).' · Phlo '.($feed['phlo'] ?? '?'), class: 'sw-sub'), class: 'sw-titles')
+	$head = tag('div', tag('div', static::icon('server', 18, 'blue').$titles, class: 'sw-id').$pill, class: 'sw-head')
+	if (!$online) return tag('div', $head.tag('p', 'niet bereikbaar', class: 'sw-offline'), class: 'sw-card metric-card')
+	$uptime = tag('div', static::icon('clock', 16, 'emerald').tag('div', tag('div', 'Uptime', class: 'sw-tile-label').tag('div', age_human($m->uptime_sec ?? 0), class: 'sw-tile-val')), class: 'sw-tile')
+	$bars = static::bar('CPU Load', static::loadPct($m), 'cpu', void, ($m->load1 ?? 0).' / '.($m->cpu_count ?? 0).' cpu').static::bar('Geheugen', static::pct($m->mem_used ?? 0, $m->mem_total ?? 0), 'activity', void, size_human($m->mem_used ?? 0).' / '.size_human($m->mem_total ?? 0)).static::bar('Disk', static::pct($m->disk_used ?? 0, $m->disk_total ?? 0), 'harddrive', 'disk', size_human($m->disk_used ?? 0).' / '.size_human($m->disk_total ?? 0))
+	return tag('div', $head.$uptime.tag('div', $bars, class: 'sw-bars'), class: 'sw-card metric-card')
+}
+
+static siteRow($a){
+	$state = static::envState($a['code'] ?? 0)
+	$code = (int)($a['code'] ?? 0)
+	$status = tag('span', void, class: 'st-dot '.$state).tag('span', $code ?: 'down', class: 'ping-code')
+	$name = tag('td', tag('a', $a['host'], href: 'https://'.$a['host'].'/', target: '_blank', class: 'site-link'), class: 'site-name')
+	$env = tag('td', tag('span', strtoupper($a['env'] ?? ''), class: 'env-tag '.($a['env'] ?? '')), class: 'c')
+	$st = tag('td', tag('span', $status, class: 'ping-main '.$state).tag('span', ($a['ms'] ?? 0).'ms', class: 'ping-ms'), class: 'c')
+	return tag('tr', $name.$env.$st)
+}
+
+static sitesTable($apps){
+	if (!$apps) return tag('p', 'geen sites', class: 'sw-offline')
+	$head = tag('tr', tag('th', 'Applicatie').tag('th', 'Env', class: 'c').tag('th', 'Status', class: 'c'))
+	$body = loop($apps, fn($a) => static::siteRow($a), void)
+	return tag('div', tag('table', tag('thead', $head).tag('tbody', $body)), class: 'st-scroll')
+}
+
+static errorsBlock($errs){
+	$total = 0
+	foreach ($errs AS $x) $total += (int)($x['occurrences'] ?? 0)
+	$h = tag('div', static::icon('alert', 14, $total ? 'error' : 'muted').tag('span', 'Errors ('.$total.')'), class: 'err-head')
+	if (!$errs) return tag('div', $h.tag('div', 'geen fouten', class: 'err-none'), class: 'err-block')
+	$rows = loop($errs, fn($x, $app) => tag('div', tag('span', $app, class: 'err-app').tag('span', (int)($x['unique'] ?? 0).'u / '.(int)($x['occurrences'] ?? 0).'occ', class: 'err-num'), class: 'err-row'), void)
+	return tag('div', $h.tag('div', $rows, class: 'err-list'), class: 'err-block')
 }
 
 static serverPanel($feed){
-	$label = $feed['label'] ?? ($feed['server'] ?? '?')
-	if (!($feed['ok'] ?? false)){
-		$head = tag('div', tag('div', static::icon('server', 18, 'muted').tag('span', $label, class: 'np-label'), class: 'np-name').tag('span', tag('span', void, class: 'sw-dot').tag('span', 'offline'), class: 'sw-pill offline'), class: 'np-head')
-		return tag('section', $head.tag('p', 'niet bereikbaar', class: 'np-offline'), class: 'sw-card node-panel off')
-	}
-	$m = (object)($feed['metrics'] ?? [])
-	$apps = $feed['apps'] ?? []
-	$errs = $feed['errors'] ?? []
-	$age = (int)($feed['age'] ?? 0)
-	$errTotal = 0
-	foreach ($errs AS $x) $errTotal += (int)($x['occurrences'] ?? 0)
-	$pill = tag('span', tag('span', void, class: 'sw-dot').tag('span', 'online'), class: 'sw-pill online')
-	$name = tag('div', static::icon('server', 18, 'blue').tag('div', tag('span', $label, class: 'np-label').tag('span', ($feed['server'] ?? void).' · Phlo '.($feed['phlo'] ?? '?'), class: 'np-sub'), class: 'np-titles'), class: 'np-name')
-	$head = tag('div', $name.$pill, class: 'np-head')
-	$bars = static::bar('CPU', static::loadPct($m), 'cpu', void, ($m->load1 ?? 0).' / '.($m->cpu_count ?? 0).' cpu').static::bar('Geheugen', static::pct($m->mem_used ?? 0, $m->mem_total ?? 0), 'activity', void, size_human($m->mem_used ?? 0).' / '.size_human($m->mem_total ?? 0)).static::bar('Disk', static::pct($m->disk_used ?? 0, $m->disk_total ?? 0), 'harddrive', 'disk', size_human($m->disk_used ?? 0).' / '.size_human($m->disk_total ?? 0))
-	$uptime = tag('div', static::icon('clock', 14, 'emerald').tag('span', age_human($m->uptime_sec ?? 0).' uptime', class: 'np-up-val'), class: 'np-up')
-	$appSec = tag('div', tag('div', tag('span', static::icon('globe', 14, 'muted').tag('span', count($apps).' hosts'), class: 'np-sec-l').tag('span', static::envChips($apps), class: 'np-chips'), class: 'np-sec-h'), class: 'np-apps')
-	$errSec = tag('div', tag('div', static::icon('alert', 13, $errTotal ? 'error' : 'muted').tag('span', 'Errors ('.$errTotal.')'), class: 'np-sec-h np-err-h').tag('div', static::errRows($errs), class: 'np-err-list'), class: 'np-errs')
-	return tag('section', tag('div', $head.$uptime, class: 'np-top').tag('div', $bars, class: 'sw-bars').$appSec.$errSec, class: 'sw-card node-panel')
+	$left = static::metricCard($feed)
+	if (!($feed['ok'] ?? false)) return tag('section', tag('div', $left, class: 'np-cols'), class: 'node-panel off')
+	$right = tag('div', static::sitesTable($feed['apps'] ?? []).static::errorsBlock($feed['errors'] ?? []), class: 'np-right')
+	return tag('section', tag('div', $left.$right, class: 'np-cols'), class: 'node-panel')
 }
 
 static panels {
@@ -71,7 +91,7 @@ route both GET overview {
 	$titleBlock = tag('div', tag('h1', static::icon('activity', 26, 'blue').tag('span', 'Fleet Dashboard', class: 'grad'), class: 'dash-title').tag('p', 'Servers en applicaties over de hele fleet', class: 'dash-sub'))
 	$update = tag('div', static::icon('refresh', 16, 'muted').tag('span', 'Laatste poll: '.tag('span', $polled, class: 'upd-time')), class: 'dash-update')
 	$head = tag('header', $titleBlock.$update, class: 'dash-head')
-	main(tag('div', $head.tag('div', static::panels(), class: 'node-grid'), class: 'dash'), 'Overzicht')
+	main(tag('div', $head.tag('div', static::panels(), class: 'node-list'), class: 'dash'), 'Overzicht')
 }
 
 <style>
@@ -132,10 +152,27 @@ route both GET overview {
 	color: $text
 	font-family: monospace
 }
-.node-grid {
-	display: grid
+.node-list {
+	display: flex
+	flex-direction: column
+	gap: 1.5rem
+}
+.np-cols {
+	display: flex
+	flex-direction: column
 	gap: 1.25rem
-	grid-template-columns: repeat(auto-fill, minmax(340px, 1fr))
+}
+@media(min-width:1000px){
+	.np-cols: align-items: stretch
+	.np-cols: flex-direction: row
+	.metric-card: flex: 0 0 320px
+}
+.np-right {
+	display: flex
+	flex-direction: column
+	flex: 1 1 0
+	gap: 1rem
+	min-width: 0
 }
 .sw-card {
 	background: $surface
@@ -144,58 +181,46 @@ route both GET overview {
 	box-shadow: 0 10px 25px #0006
 	display: flex
 	flex-direction: column
-	gap: 1rem
+	gap: 1.1rem
 	padding: 1.25rem
 }
-.node-panel.off: opacity: .55
-.np-top {
+.node-panel.off .metric-card: opacity: .6
+.sw-head {
 	align-items: flex-start
 	display: flex
+	gap: .5rem
 	justify-content: space-between
 }
-.np-head {
+.sw-id {
 	align-items: center
 	display: flex
 	gap: .5rem
 }
-.np-name {
-	align-items: center
-	color: $text
-	display: flex
-	gap: .5rem
-}
-.np-titles {
+.sw-titles {
 	display: flex
 	flex-direction: column
 	gap: .1rem
 }
-.np-label {
+.sw-name {
+	color: $text
 	font-size: 1.15rem
 	font-weight: 700
 }
-.np-sub {
+.sw-sub {
 	color: $muted
 	font-family: monospace
 	font-size: .75rem
 }
-.np-up {
-	align-items: center
-	color: $muted
-	display: flex
-	font-size: .78rem
-	gap: .35rem
-	white-space: nowrap
-}
-.np-up-val: color: $text
 .sw-pill {
 	align-items: center
 	background: $bg
 	border: 1px solid $border
 	border-radius: 999px
 	display: inline-flex
-	font-size: .78rem
-	gap: .45rem
+	font-size: .76rem
+	gap: .4rem
 	padding: .2rem .6rem
+	white-space: nowrap
 }
 .sw-dot {
 	animation: dashpulse 2s ease-in-out infinite
@@ -209,10 +234,31 @@ route both GET overview {
 	0%, 100%: opacity: 1
 	50%: opacity: .35
 }
+.sw-tile {
+	align-items: center
+	background: $bg
+	border: 1px solid $border
+	border-radius: 10px
+	display: flex
+	gap: .75rem
+	padding: .7rem
+}
+.sw-tile-label {
+	color: $muted
+	font-size: .75rem
+}
+.sw-tile-val {
+	color: $text
+	font-weight: 600
+}
 .sw-bars {
 	display: flex
 	flex-direction: column
 	gap: .9rem
+}
+.sw-offline {
+	color: $muted
+	padding: .5rem 0
 }
 .pb-top {
 	align-items: center
@@ -256,77 +302,130 @@ route both GET overview {
 .pb.mid .pb-fill: background: $warn
 .pb.high .pb-fill: background: $error
 .pb.disk .pb-fill: background: #a855f7
-.np-sec-h {
+.st-scroll {
+	background: $surface
+	border: 1px solid $border
+	border-radius: 12px
+	box-shadow: 0 10px 25px #0006
+	max-height: 420px
+	overflow: auto
+}
+.st-scroll table {
+	border-collapse: collapse
+	width: 100%
+}
+.st-scroll th {
+	background: color-mix(in srgb, $surface 92%, $text)
+	color: $muted
+	font-size: .7rem
+	font-weight: 500
+	letter-spacing: .05em
+	padding: .7rem 1rem
+	position: sticky
+	text-align: left
+	text-transform: uppercase
+	top: 0
+}
+.st-scroll th.c: text-align: center
+.st-scroll td {
+	border-top: 1px solid color-mix(in srgb, $border 60%, transparent)
+	padding: .55rem 1rem
+	vertical-align: middle
+}
+.st-scroll td.c: text-align: center
+.st-scroll tbody tr:hover: background: color-mix(in srgb, $surface 88%, $text)
+.site-link {
+	color: $text
+	font-weight: 600
+	text-decoration: none
+	white-space: nowrap
+}
+.site-link:hover: color: $primary
+.env-tag {
+	border-radius: 6px
+	font-size: .66rem
+	font-weight: 700
+	padding: .1rem .4rem
+}
+.env-tag.prod {
+	background: color-mix(in srgb, $success 18%, transparent)
+	color: $success
+}
+.env-tag.stage {
+	background: color-mix(in srgb, $warn 18%, transparent)
+	color: $warn
+}
+.env-tag.dev {
+	background: color-mix(in srgb, $primary 18%, transparent)
+	color: $primary
+}
+.ping-main {
+	align-items: center
+	display: inline-flex
+	font-family: monospace
+	font-size: .82rem
+	font-weight: 600
+	gap: .3rem
+}
+.ping-main.up: color: $success
+.ping-main.auth: color: $primary
+.ping-main.redir: color: $muted
+.ping-main.warn: color: $warn
+.ping-main.down: color: $error
+.st-dot {
+	border-radius: 50%
+	display: inline-block
+	flex-shrink: 0
+	height: 8px
+	width: 8px
+}
+.st-dot.up: background: $success
+.st-dot.auth: background: $primary
+.st-dot.redir: background: $muted
+.st-dot.warn: background: $warn
+.st-dot.down: background: $error
+.ping-ms {
+	color: $muted
+	font-family: monospace
+	font-size: .66rem
+	margin-left: .4rem
+}
+.err-block {
+	background: $surface
+	border: 1px solid $border
+	border-radius: 12px
+	display: flex
+	flex-direction: column
+	gap: .5rem
+	padding: 1rem 1.25rem
+}
+.err-head {
 	align-items: center
 	color: $muted
 	display: flex
-	font-size: .78rem
-	gap: .5rem
-	justify-content: space-between
-}
-.np-sec-l {
-	align-items: center
-	display: flex
+	font-size: .8rem
 	gap: .4rem
 }
-.np-chips {
-	display: flex
-	flex-wrap: wrap
-	gap: .35rem
-}
-.np-env {
-	border-radius: 6px
-	font-size: .7rem
-	font-weight: 600
-	padding: .1rem .45rem
-}
-.np-env.prod {
-	background: color-mix(in srgb, $success 20%, transparent)
-	color: $success
-}
-.np-env.stage {
-	background: color-mix(in srgb, $warn 20%, transparent)
-	color: $warn
-}
-.np-env.dev {
-	background: color-mix(in srgb, $primary 20%, transparent)
-	color: $primary
-}
-.np-apps {
-	border-top: 1px solid color-mix(in srgb, $border 60%, transparent)
-	padding-top: .85rem
-}
-.np-errs {
-	border-top: 1px solid color-mix(in srgb, $border 60%, transparent)
+.err-list {
 	display: flex
 	flex-direction: column
-	gap: .4rem
-	padding-top: .85rem
-}
-.np-err-list {
-	display: flex
-	flex-direction: column
-	gap: .25rem
-	max-height: 140px
+	gap: .3rem
+	max-height: 130px
 	overflow-y: auto
 }
-.np-err-row {
+.err-row {
 	display: flex
-	font-size: .8rem
+	font-size: .82rem
 	justify-content: space-between
 }
-.np-err-app: color: $text
-.np-err-num {
+.err-app: color: $text
+.err-num {
 	color: $error
 	font-family: monospace
 	white-space: nowrap
 }
-.np-err-none {
+.err-none {
 	color: $success
-	font-size: .8rem
-}
-.np-offline {
-	color: $muted
-	padding: 1rem 0
+	font-size: .82rem
 }
 </style>
