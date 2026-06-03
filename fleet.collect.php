@@ -35,6 +35,17 @@ function fleet_ping(array $hosts, bool $local = false): array {
 	return $out;
 }
 
+function fleet_visitors($db): ?int {
+	if (!is_array($db) || empty($db['host']) || empty($db['database'])) return null;
+	try {
+		$pdo = new PDO('mysql:host='.$db['host'].';dbname='.$db['database'], (string)($db['user'] ?? ''), (string)($db['password'] ?? ''), [PDO::ATTR_TIMEOUT => 3, PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+		return (int)$pdo->query('SELECT COUNT(DISTINCT token) FROM visitors')->fetchColumn();
+	}
+	catch (\Throwable $e){
+		return null;
+	}
+}
+
 function fleet_env(string $block): string {
 	if (str_contains($block, 'phlo_dev')) return 'dev';
 	if (str_contains($block, 'phlo_stage')) return 'stage';
@@ -101,10 +112,14 @@ function fleet_collect(): array {
 	$version = '?';
 	if (preg_match("/const phlo\\s*=\\s*'([^']+)'/", (string)@file_get_contents('/srv/control/phlo/phlo.php'), $vm)) $version = $vm[1];
 
+	$ini = @parse_ini_file('/srv/control/dashboard/data/creds.ini', true, INI_SCANNER_RAW);
+	$visitors = fleet_visitors(is_array($ini) ? ($ini['mysql'] ?? null) : null);
+
 	return [
 		'server' => gethostname(),
 		'phlo' => $version,
 		'time' => time(),
+		'visitors' => $visitors,
 		'metrics' => [
 			'cpu_count' => $cpu,
 			'load1' => round($load[0] ?? 0, 2),

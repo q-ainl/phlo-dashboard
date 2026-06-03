@@ -7,6 +7,7 @@ static icons => [
 	'globe' => '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
 	'alert' => '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
 	'refresh' => '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+	'users' => '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
 ]
 
 static icon($name, $size = 16, $class = void) => '<svg class="ic'.($class ? ' '.$class : void).'" width="'.$size.'" height="'.$size.'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'.(static::icons()[$name] ?? void).'</svg>'
@@ -43,6 +44,9 @@ static metricCard($feed){
 	$head = tag('div', tag('div', static::icon('server', 18, 'blue').$titles, class: 'sw-id').$pill, class: 'sw-head')
 	if (!$online) return tag('div', $head.tag('p', 'niet bereikbaar', class: 'sw-offline'), class: 'sw-card metric-card')
 	$uptime = tag('div', static::icon('clock', 16, 'emerald').tag('div', tag('div', 'Uptime', class: 'sw-tile-label').tag('div', age_human($m->uptime_sec ?? 0), class: 'sw-tile-val')), class: 'sw-tile')
+	$vis = $feed['visitors'] ?? null
+	$visTile = $vis === null ? void : tag('div', static::icon('users', 16, 'blue').tag('div', tag('div', 'Bezoekers', class: 'sw-tile-label').tag('div', number_format((int)$vis, 0, ',', '.'), class: 'sw-tile-val')), class: 'sw-tile')
+	$uptime = tag('div', $uptime.$visTile, class: 'sw-tiles')
 	$bars = static::bar('CPU Load', static::loadPct($m), 'cpu', void, ($m->load1 ?? 0).' / '.($m->cpu_count ?? 0).' cpu').static::bar('Geheugen', static::pct($m->mem_used ?? 0, $m->mem_total ?? 0), 'activity', void, size_human($m->mem_used ?? 0).' / '.size_human($m->mem_total ?? 0)).static::bar('Disk', static::pct($m->disk_used ?? 0, $m->disk_total ?? 0), 'harddrive', 'disk', size_human($m->disk_used ?? 0).' / '.size_human($m->disk_total ?? 0))
 	$node = $feed['node'] ?? 'local'
 	$actions = in_array($feed['mode'] ?? '', ['self', 'pull']) ? tag('div', static::actionBtn($node, 'errors-reset', 'Errors wissen').static::actionBtn($node, 'rebuild', 'Rebuild').static::actionBtn($node, 'ws-restart', 'WS herstart'), class: 'np-actions') : void
@@ -263,6 +267,14 @@ route both GET overview {
 	0%, 100%: opacity: 1
 	50%: opacity: .35
 }
+.sw-tiles {
+	display: flex
+	gap: .75rem
+}
+.sw-tiles .sw-tile {
+	flex: 1 1 0
+	min-width: 0
+}
 .sw-tile {
 	align-items: center
 	background: $bg
@@ -271,6 +283,10 @@ route both GET overview {
 	display: flex
 	gap: .75rem
 	padding: .7rem
+}
+.sw-tile .sw-tile-val {
+	overflow: hidden
+	text-overflow: ellipsis
 }
 .sw-tile-label {
 	color: $muted
