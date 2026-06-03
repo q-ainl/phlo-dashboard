@@ -57,16 +57,26 @@ static actionBtn($node, $command, $label) => tag('button', $label, type: 'button
 
 static srvStat($ic, $val, $cls = void) => tag('span', static::icon($ic, 14).tag('span', $val), class: 'srv-stat'.($cls ? ' '.$cls : void))
 
-static srvStats($feed, $m){
+static srvDots($feed){
 	$apps = $feed['apps'] ?? []
-	$total = count($apps)
-	$down = 0
-	foreach ($apps AS $a) if (static::envState($a['code'] ?? 0) === 'down') $down++
-	$errTotal = 0
-	foreach (($feed['errors'] ?? []) AS $x) $errTotal += (int)($x['occurrences'] ?? 0)
-	$vis = (int)array_sum($feed['visitors'] ?? [])
-	$apps2 = count(static::groupApps($apps))
-	return tag('div', static::srvStat('clock', age_human($m->uptime_sec ?? 0)).static::srvStat('globe', $apps2.' apps').static::srvStat('check', ($total - $down).'/'.$total.' up', $down ? 'bad' : 'good').static::srvStat('alert', $errTotal.' errors', $errTotal ? 'bad' : void).static::srvStat('users', number_format($vis, 0, ',', '.').' bezoekers'), class: 'srv-stats')
+	if (!$apps) return tag('div', 'geen sites', class: 'srv-muted')
+	return tag('div', loop($apps, fn($a) => tag('a', void, href: 'https://'.$a['host'].'/', target: '_blank', title: $a['host'].' - '.((int)($a['code'] ?? 0) ?: 'down'), class: 'sdot '.static::envState($a['code'] ?? 0)), void), class: 'sdots')
+}
+
+static srvCounts($feed){
+	$c = ['up' => 0, 'auth' => 0, 'warn' => 0, 'down' => 0]
+	foreach (($feed['apps'] ?? []) AS $a) $c[static::envState($a['code'] ?? 0)]++
+	$labels = ['up' => 'up', 'auth' => 'auth', 'warn' => 'warn', 'down' => 'down']
+	$parts = void
+	foreach ($labels AS $k => $lbl) if ($c[$k]) $parts .= tag('span', tag('span', void, class: 'st-dot '.$k).$c[$k].' '.$lbl, class: 'scount '.$k)
+	return tag('div', $parts, class: 'scounts')
+}
+
+static srvTopErrors($feed){
+	$errs = $feed['errors'] ?? []
+	if (!$errs) return tag('div', static::icon('check', 14, 'emerald').tag('span', 'geen fouten'), class: 'serr-none')
+	uasort($errs, fn($a, $b) => ($b['occurrences'] ?? 0) <=> ($a['occurrences'] ?? 0))
+	return tag('div', loop(array_slice($errs, 0, 5, true), fn($x, $app) => tag('div', tag('span', $app, class: 'serr-app').tag('span', number_format((int)($x['occurrences'] ?? 0), 0, ',', '.'), class: 'serr-n'), class: 'serr-row'), void), class: 'serr-list')
 }
 
 static envState($code){
@@ -111,10 +121,11 @@ static appTable($apps, $status, $visitors, $node, $errors, $canManage){
 	return tag('section', $h.tag('div', $tbl, class: 'st-scroll'), class: 'sw-card st-card')
 }
 
-static serverHead($label, $sub, $ok){
+static serverHead($label, $sub, $ok, $extra = void){
 	$pill = tag('span', tag('span', void, class: 'sw-dot').tag('span', $ok ? 'online' : 'offline'), class: 'sw-pill '.($ok ? 'online' : 'offline'))
 	$titles = tag('div', tag('span', $label, class: 'sw-name').tag('span', $sub, class: 'sw-sub'), class: 'sw-titles')
-	return tag('div', tag('div', tag('span', void, class: 'srv-chev').static::icon('server', 18, 'blue').$titles, class: 'srv-id').$pill, class: 'srv-head')
+	$left = tag('div', tag('span', void, class: 'srv-chev').static::icon('server', 18, 'blue').$titles, class: 'srv-id')
+	return tag('div', $left.tag('div', $extra.$pill, class: 'srv-right'), class: 'srv-head')
 }
 
 static serverBlock($node){
@@ -123,11 +134,20 @@ static serverBlock($node){
 	$ok = $feed['ok'] ?? false
 	if (!$ok) return tag('div', static::serverHead($label, 'niet bereikbaar', false), class: 'srv-card off')
 	$m = (object)($feed['metrics'] ?? [])
+	$apps = $feed['apps'] ?? []
 	$canManage = in_array($feed['mode'] ?? '', ['self', 'pull'])
-	$bars = tag('div', static::bar('CPU', static::loadPct($m), 'cpu', void, ($m->load1 ?? 0).'/'.($m->cpu_count ?? 0)).static::bar('Geheugen', static::pct($m->mem_used ?? 0, $m->mem_total ?? 0), 'activity', void, size_human($m->mem_used ?? 0).' / '.size_human($m->mem_total ?? 0)).static::bar('Disk', static::pct($m->disk_used ?? 0, $m->disk_total ?? 0), 'harddrive', 'disk', size_human($m->disk_used ?? 0).' / '.size_human($m->disk_total ?? 0)), class: 'srv-metrics')
-	$summary = tag('summary', static::serverHead($label, ($feed['server'] ?? '?').' · Phlo '.($feed['phlo'] ?? '?'), true).$bars.static::srvStats($feed, $m), class: 'srv-sum')
+	$errTotal = 0
+	foreach (($feed['errors'] ?? []) AS $x) $errTotal += (int)($x['occurrences'] ?? 0)
+	$vis = (int)array_sum($feed['visitors'] ?? [])
+	$extra = static::srvStat('clock', age_human($m->uptime_sec ?? 0)).static::srvStat('users', number_format($vis, 0, ',', '.'))
+	$head = static::serverHead($label, ($feed['server'] ?? '?').' · Phlo '.($feed['phlo'] ?? '?'), true, $extra)
+	$bars = tag('div', static::bar('CPU', static::loadPct($m), 'cpu', void, ($m->load1 ?? 0).' / '.($m->cpu_count ?? 0).' cpu').static::bar('Geheugen', static::pct($m->mem_used ?? 0, $m->mem_total ?? 0), 'activity', void, size_human($m->mem_used ?? 0).' / '.size_human($m->mem_total ?? 0)).static::bar('Disk', static::pct($m->disk_used ?? 0, $m->disk_total ?? 0), 'harddrive', 'disk', size_human($m->disk_used ?? 0).' / '.size_human($m->disk_total ?? 0)), class: 'sw-bars')
+	$colRes = tag('div', tag('div', 'Resources', class: 'srv-coltitle').$bars, class: 'srv-col')
+	$colSites = tag('div', tag('div', count($apps).' sites', class: 'srv-coltitle').static::srvDots($feed).static::srvCounts($feed), class: 'srv-col')
+	$colErr = tag('div', tag('div', $errTotal.' errors', class: 'srv-coltitle'.($errTotal ? ' bad' : void)).static::srvTopErrors($feed), class: 'srv-col')
+	$summary = tag('summary', $head.tag('div', $colRes.$colSites.$colErr, class: 'srv-grid'), class: 'srv-sum')
 	$footer = $canManage ? tag('div', static::actionBtn($node, 'rebuild', 'Rebuild').static::actionBtn($node, 'ws-restart', 'WS herstart').static::actionBtn($node, 'errors-reset', 'Errors wissen'), class: 'mg-actions') : void
-	$table = static::appTable(static::groupApps($feed['apps'] ?? []), static::statusMap($feed['apps'] ?? []), $feed['visitors'] ?? [], $node, $feed['errors'] ?? [], $canManage)
+	$table = static::appTable(static::groupApps($apps), static::statusMap($apps), $feed['visitors'] ?? [], $node, $feed['errors'] ?? [], $canManage)
 	return tag('details', $summary.tag('div', $table.$footer, class: 'srv-body'), class: 'srv-card')
 }
 
@@ -202,27 +222,6 @@ route both GET overview {
 	color: $text
 	font-family: monospace
 }
-.dash-cols {
-	display: flex
-	flex-direction: column
-	gap: 1.5rem
-}
-@media(min-width:1100px){
-	.dash-cols: align-items: start
-	.dash-cols: flex-direction: row
-	.dash-servers: max-width: 33%
-}
-.dash-servers {
-	display: flex
-	flex-direction: column
-	flex: 1 1 0
-	gap: 1.5rem
-	min-width: 300px
-}
-.dash-sites {
-	flex: 1 1 0
-	min-width: 0
-}
 .sw-card {
 	background: $surface
 	border: 1px solid $border
@@ -232,12 +231,6 @@ route both GET overview {
 	flex-direction: column
 	gap: 1.25rem
 	padding: 1.25rem
-}
-.sw-head {
-	align-items: flex-start
-	display: flex
-	gap: .5rem
-	justify-content: space-between
 }
 .sw-titles {
 	display: flex
@@ -544,29 +537,98 @@ route both GET overview {
 	width: 0
 }
 details[open] .srv-chev: transform: rotate(90deg)
-.srv-metrics {
-	display: flex
-	flex-wrap: wrap
-	gap: 1.5rem
-}
-.srv-metrics .pb {
-	flex: 1 1 0
-	min-width: 150px
-}
-.srv-stats {
+.srv-right {
+	align-items: center
 	color: $muted
 	display: flex
 	flex-wrap: wrap
 	font-size: .82rem
-	gap: 1.1rem
+	gap: 1rem
+	justify-content: flex-end
 }
 .srv-stat {
 	align-items: center
 	display: inline-flex
 	gap: .35rem
 }
-.srv-stat.bad: color: $error
-.srv-stat.good: color: $success
+.srv-grid {
+	display: grid
+	gap: 1.25rem 1.75rem
+	grid-template-columns: repeat(auto-fit, minmax(240px, 1fr))
+}
+.srv-col {
+	display: flex
+	flex-direction: column
+	gap: .65rem
+	min-width: 0
+}
+.srv-coltitle {
+	color: $muted
+	font-size: .72rem
+	font-weight: 700
+	letter-spacing: .05em
+	text-transform: uppercase
+}
+.srv-coltitle.bad: color: $error
+.srv-muted: color: $muted
+.sdots {
+	display: flex
+	flex-wrap: wrap
+	gap: 5px
+}
+.sdot {
+	border-radius: 50%
+	height: 11px
+	transition: transform .1s ease
+	width: 11px
+}
+.sdot:hover: transform: scale(1.4)
+.sdot.up: background: $success
+.sdot.auth: background: $primary
+.sdot.warn: background: $warn
+.sdot.down: background: $error
+.scounts {
+	display: flex
+	flex-wrap: wrap
+	font-size: .8rem
+	gap: .85rem
+}
+.scount {
+	align-items: center
+	color: $muted
+	display: inline-flex
+	gap: .3rem
+}
+.scount.down: color: $error
+.serr-list {
+	display: flex
+	flex-direction: column
+	gap: .3rem
+}
+.serr-row {
+	display: flex
+	font-size: .82rem
+	gap: .75rem
+	justify-content: space-between
+}
+.serr-app {
+	overflow: hidden
+	text-overflow: ellipsis
+	white-space: nowrap
+}
+.serr-n {
+	color: $error
+	flex-shrink: 0
+	font-family: monospace
+	font-weight: 600
+}
+.serr-none {
+	align-items: center
+	color: $success
+	display: flex
+	font-size: .82rem
+	gap: .35rem
+}
 .srv-body {
 	border-top: 1px solid $border
 	display: flex
@@ -575,8 +637,10 @@ details[open] .srv-chev: transform: rotate(90deg)
 	padding: 1.1rem 1.25rem
 }
 .srv-body .st-card {
+	background: transparent
 	border: none
 	box-shadow: none
+	padding: 0
 }
 .mg-actions {
 	border-top: 1px solid color-mix(in srgb, $border 60%, transparent)
