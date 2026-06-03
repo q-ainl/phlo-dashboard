@@ -8,10 +8,11 @@ prop options = 'wss'
 prop version = '1.0.1'
 prop model = 'gpt-4o'
 
-prop models = ['visitor']
+prop models = ['visitor', 'domain']
 prop menu = [
 	'overview' => ['icon' => '🏠', 'uri' => 'overview',    'title' => 'Overzicht'],
 	'visitor'  => ['icon' => '👁️', 'uri' => 'visitors',   'title' => 'Bezoekers'],
+	'domain'   => ['icon' => '🌍', 'uri' => 'domains',     'title' => 'Domeinen'],
 	'site'     => ['icon' => '🌐', 'uri' => 'sites',       'title' => 'Sites'],
 ]
 
@@ -24,6 +25,7 @@ method useQdev {
 
 %security->strict
 $this->token
+if (auth::check()) return
 %req->path === void || str_starts_with(%req->path, 'visitor') ? $this->useQdev() : null
 if (app::route()) return
 if (%req->method !== 'GET') return apply(error: 'Invalid request')

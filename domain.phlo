@@ -1,0 +1,58 @@
+@ extends: model
+
+view: $this->id
+
+static titleList = 'Domeinen'
+static titleRecord = 'Domein'
+
+static pp = 100
+static table = 'domains'
+static order = 'id ASC'
+
+static objFilters = [
+	'mail' => [
+		'title'  => 'Met e-mail',
+		'filter' => 'mail = 1',
+	],
+]
+
+static objSorts = [
+	'expires' => [
+		'title' => 'Verloopdatum',
+		'order' => 'expires ASC',
+	],
+]
+
+static objWidgets => [
+	'Verloop domeinen' => obj (
+			order: 5,
+			type: 'list',
+			data: loop(static::records(
+				table: 'domains',
+				order: 'expires ASC',
+				limit: 5,
+			), fn($info, $domain) => tag('a', $domain, href: "https://$domain/").': '.tag('span', void, data_ts: strtotime($info->expires)),
+		),
+	),
+]
+
+static schema => arr (
+	id: field (
+		type: 'text',
+		title: 'Domein',
+		change: 'label',
+	),
+	registrar: field (
+		type: 'select',
+		title: 'Registrant',
+		options: ['External', 'Name.com', 'Realcloud', 'Strato', 'Squarespace', 'Versio', 'Vimexx', 'Yourhosting'],
+	),
+	mail: field (
+		type: 'bool',
+		title: 'E-mail',
+	),
+	expires: field (
+		type: 'date',
+		title: 'Verloopt',
+	),
+)

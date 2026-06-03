@@ -1,0 +1,80 @@
+static peers => %creds->fleet ?? null
+
+static sitesPath => '/srv/control/sites'
+
+static authPeer {
+	$time = (int)($_SERVER['HTTP_X_FLEET_TIME'] ?? 0)
+	$sign = (string)($_SERVER['HTTP_X_FLEET_SIGN'] ?? void)
+	if (!$time || $sign === void || abs(time() - $time) > 300) return false
+	$peers = static::peers()
+	if (!$peers) return false
+	foreach ($peers AS $name => $peer){
+		$secret = (string)($peer->secret ?? void)
+		if ($secret === void) continue
+		if (hash_equals(hash_hmac('sha256', (string)$time, $secret), $sign)) return $name
+	}
+	return false
+}
+
+static servedHosts {
+	$out = []
+	foreach (glob(static::sitesPath().'/*.caddy') AS $file){
+		if (!preg_match_all('/^([a-z0-9*][^{(\n]*)\{/m', (string)file_get_contents($file), $m)) continue
+		foreach ($m[1] AS $line){
+			foreach (explode(',', $line) AS $host){
+				$host = trim($host)
+				if (!$host || !str_contains($host, dot)) continue
+				$env = str_starts_with($host, 'dev.') ? 'dev' : (str_starts_with($host, 'stage.') ? 'stage' : 'prod')
+				$out[] = ['host' => $host, 'env' => $env, 'app' => basename($file, '.caddy')]
+			}
+		}
+	}
+	return $out
+}
+
+static errorsSummary {
+	$out = []
+	foreach (glob('/srv/*/data/errors.json') AS $file){
+		$data = json_decode((string)file_get_contents($file), true)
+		if (!is_array($data) || !$data) continue
+		$occ = 0
+		$latest = void
+		foreach ($data AS $e){
+			$occ += (int)($e['count'] ?? 1)
+			$lo = (string)($e['lastOccurred'] ?? void)
+			$lo > $latest && $latest = $lo
+		}
+		$out[basename(dirname(dirname($file)))] = ['unique' => count($data), 'occurrences' => $occ, 'latest' => $latest]
+	}
+	return $out
+}
+
+static feedData => [
+	'server' => gethostname(),
+	'phlo' => constant('phlo'),
+	'time' => time(),
+	'apps' => static::servedHosts(),
+	'errors' => static::errorsSummary(),
+]
+
+static pull($peerName){
+	$peer = static::peers()?->$peerName ?? null
+	if (!$peer) return null
+	$url = (string)($peer->url ?? void)
+	$secret = (string)($peer->secret ?? void)
+	if ($url === void || $secret === void) return null
+	$time = (string)time()
+	$headers = ['X-Fleet-Time: '.$time, 'X-Fleet-Sign: '.hash_hmac('sha256', $time, $secret)]
+	return json_decode((string)HTTP($url.'/fleet/feed', $headers), true)
+}
+
+route GET fleet feed {
+	%security->api
+	%res->type = 'application/json'
+	if (!static::authPeer()){
+		%res->body = json_encode(['error' => 'unauthorized'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+		return %res->render(401)
+	}
+	%res->body = json_encode(static::feedData(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+	return %res->render()
+}

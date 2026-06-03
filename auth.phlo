@@ -1,0 +1,133 @@
+static publicPaths => array_merge(['login', 'logout', 'fleet'], (array)(%app->publicPaths ?? []))
+
+static authed => (bool)(%session->user ?? null)
+
+static publicPath($path = null) => in_array(explode('/', trim((string)($path ?? %req->path), '/'))[0], static::publicPaths())
+
+static siteCreds => parse_ini_file(data.'auth.ini', true, INI_SCANNER_RAW)['site'] ?? []
+
+static verify($user, $pass){
+	$c = static::siteCreds()
+	$u = (string)($c['user'] ?? void)
+	$p = (string)($c['password'] ?? void)
+	return $u !== void && $p !== void && hash_equals($u, (string)$user) && hash_equals($p, (string)$pass)
+}
+
+static check {
+	if (static::authed()) return false
+	if (static::publicPath()) return false
+	return location('/login')
+}
+
+static logout {
+	unset(%session->user)
+	unset(%session->name)
+	return location('/login')
+}
+
+route both GET login {
+	if (static::authed()) return location('/')
+	view($this->loginPage, 'Inloggen')
+}
+
+route async POST login {
+	$user = trim((string)(%payload->username ?? void))
+	$pass = trim((string)(%payload->password ?? void))
+	if (!$user || !$pass) return apply(inner: ['#loginError' => tag('span', 'Vul gebruikersnaam en wachtwoord in', class: 'login-err')])
+	if (static::verify($user, $pass)){
+		%session->user = $user
+		%session->name = $user
+		return location('/')
+	}
+	apply(inner: ['#loginError' => tag('span', 'Onbekende combinatie van gebruikersnaam en wachtwoord', class: 'login-err')])
+}
+
+route both GET logout => auth::logout()
+
+view loginPage:
+<div.login-page>
+	<form.async.login-box method=post action="/login">
+		<h1.login-title>Dashboard</h1>
+		<p.login-sub>Log in om door te gaan</p>
+		<label.login-field>
+			<span>Gebruikersnaam</span>
+			<input name=username autocomplete=username required autofocus>
+		</label>
+		<label.login-field>
+			<span>Wachtwoord</span>
+			<input name=password type=password autocomplete=current-password required>
+		</label>
+		<div#loginError></div>
+		<button.login-btn type=submit>Inloggen</button>
+	</form>
+</div>
+
+<style>
+.login-page {
+	align-items: center
+	display: flex
+	justify-content: center
+	min-height: 80dvh
+	padding: 1rem
+}
+.login-box {
+	background: $surface
+	border: 1px solid $border
+	border-radius: 14px
+	box-shadow: 0 10px 30px #0007
+	display: flex
+	flex-direction: column
+	gap: .9rem
+	max-width: 360px
+	padding: 2rem
+	width: 100%
+}
+.login-title {
+	color: $text
+	font-size: 1.5rem
+	font-weight: 800
+	margin: 0
+}
+.login-sub {
+	color: $muted
+	margin: 0 0 .5rem
+}
+.login-field {
+	display: flex
+	flex-direction: column
+	gap: .3rem
+}
+.login-field span {
+	color: $muted
+	font-size: .8rem
+}
+.login-field input {
+	background: $bg
+	border: 1px solid $border
+	border-radius: 8px
+	color: $text
+	font-size: 1rem
+	padding: .6rem .75rem
+}
+.login-field input:focus {
+	border-color: $primary
+	outline: none
+}
+.login-btn {
+	background: $primary
+	border: none
+	border-radius: 8px
+	color: $on-primary
+	cursor: pointer
+	font-size: 1rem
+	font-weight: 700
+	margin-top: .5rem
+	padding: .7rem
+}
+.login-btn:hover: opacity: .9
+.login-err {
+	color: $error
+	display: block
+	font-size: .85rem
+}
+</style>

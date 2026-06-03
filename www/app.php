@@ -3,7 +3,7 @@ require('/srv/control/phlo/phlo.php');
 phlo_app (
 	id: 'Dashboard',
 	host: 'dashboard.qdev.nl',
-	auth: true,
+	auth: false,
 	build: true,
 	debug: true,
 	dashboard: 'phlo',
