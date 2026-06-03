@@ -36,6 +36,61 @@ static nodes {
 	return $out
 }
 
+static actions => ['errors-reset', 'rebuild', 'ws-restart']
+
+static runAction($command){
+	if ($command === 'errors-reset'){
+		$n = 0
+		foreach (glob('/srv/*/data/errors.json') AS $f) if (@file_put_contents($f, '{}') !== false) $n++
+		@file_put_contents(data.'errors.json', '{}')
+		return $n.' errorbestanden gewist'
+	}
+	if ($command === 'rebuild'){
+		build::run()
+		return 'app herbouwd'
+	}
+	if ($command === 'ws-restart'){
+		@shell_exec('HOME=/var/lib/frankenphp /usr/local/bin/pm2 restart websocket 2>&1')
+		return 'websocket herstart'
+	}
+	return 'onbekende actie'
+}
+
+static authManage($command){
+	$time = (int)($_SERVER['HTTP_X_FLEET_TIME'] ?? 0)
+	$sign = (string)($_SERVER['HTTP_X_FLEET_SIGN'] ?? void)
+	if (!$time || $sign === void || abs(time() - $time) > 300) return false
+	$peers = static::peers()
+	if (!$peers) return false
+	foreach ($peers AS $name => $peer){
+		if (((string)($peer->manage ?? void)) !== '1') continue
+		$secret = (string)($peer->secret ?? void)
+		if ($secret === void) continue
+		if (hash_equals(hash_hmac('sha256', $time.'.'.$command, $secret), $sign)) return $name
+	}
+	return false
+}
+
+static manage($node, $command){
+	if (!in_array($command, static::actions())) return ['ok' => false, 'msg' => 'ongeldige actie']
+	if ($node === 'local') return ['ok' => true, 'msg' => static::runAction($command)]
+	$peer = static::peers()?->$node ?? null
+	if (!$peer) return ['ok' => false, 'msg' => 'onbekende node']
+	if (((string)($peer->mode ?? 'pull')) !== 'pull') return ['ok' => false, 'msg' => 'niet beschikbaar voor headless node']
+	$url = (string)($peer->url ?? void)
+	$secret = (string)($peer->secret ?? void)
+	if ($url === void || $secret === void) return ['ok' => false, 'msg' => 'geen creds']
+	$time = (string)time()
+	$headers = ['X-Fleet-Time: '.$time, 'X-Fleet-Sign: '.hash_hmac('sha256', $time.'.'.$command, $secret)]
+	try {
+		$res = json_decode((string)HTTP($url.'/fleet/manage', $headers, true, ['command' => $command]), true)
+		return is_array($res) ? $res : ['ok' => false, 'msg' => 'geen antwoord']
+	}
+	catch (\Throwable $e){
+		return ['ok' => false, 'msg' => 'node onbereikbaar']
+	}
+}
+
 route GET fleet feed {
 	%security->api
 	%res->type = 'application/json'
@@ -45,4 +100,21 @@ route GET fleet feed {
 	}
 	%res->body = json_encode(static::feedData(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
 	return %res->render()
+}
+
+route POST fleet manage {
+	%security->api
+	%res->type = 'application/json'
+	$command = (string)(%payload->command ?? void)
+	if (!static::authManage($command) || !in_array($command, static::actions())){
+		%res->body = json_encode(['ok' => false, 'msg' => 'unauthorized'])
+		return %res->render(401)
+	}
+	%res->body = json_encode(['ok' => true, 'msg' => static::runAction($command)])
+	return %res->render()
+}
+
+route async POST manage $node $command {
+	$res = fleet::manage($node, $command)
+	return ($res['ok'] ?? false) ? apply(toast: '✓ '.($res['msg'] ?? 'klaar')) : apply(error: ($res['msg'] ?? 'mislukt'))
 }
