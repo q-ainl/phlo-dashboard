@@ -65,7 +65,12 @@ static pull($peerName){
 	if ($url === void || $secret === void) return null
 	$time = (string)time()
 	$headers = ['X-Fleet-Time: '.$time, 'X-Fleet-Sign: '.hash_hmac('sha256', $time, $secret)]
-	return json_decode((string)HTTP($url.'/fleet/feed', $headers), true)
+	try {
+		return json_decode((string)HTTP($url.'/fleet/feed', $headers), true)
+	}
+	catch (\Throwable $e){
+		return null
+	}
 }
 
 route GET fleet feed {

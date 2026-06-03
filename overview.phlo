@@ -99,6 +99,33 @@ static appTable($apps, $status, $visitors){
 	return tag('section', $h.tag('div', $tbl, class: 'st-scroll'), class: 'sw-card st-card')
 }
 
+static fleetCard($name, $feed){
+	if (!$feed) return tag('div', tag('div', static::icon('server', 16, 'muted').tag('span', $name), class: 'fleet-name').tag('span', tag('span', void, class: 'sw-dot').tag('span', 'offline'), class: 'sw-pill offline'), class: 'fleet-card off')
+	$apps = $feed['apps'] ?? []
+	$env = []
+	foreach ($apps AS $a) $env[$a['env']] = ($env[$a['env']] ?? 0) + 1
+	$chips = void
+	foreach (['prod', 'stage', 'dev'] AS $e) if ($env[$e] ?? 0) $chips .= tag('span', strtoupper($e).' '.$env[$e], class: 'fleet-env '.$e)
+	$errs = $feed['errors'] ?? []
+	$errTotal = 0
+	foreach ($errs AS $x) $errTotal += (int)($x['occurrences'] ?? 0)
+	$head = tag('div', tag('div', static::icon('server', 16, 'blue').tag('span', $feed['server'] ?? $name), class: 'fleet-name').tag('span', tag('span', void, class: 'sw-dot').tag('span', 'online'), class: 'sw-pill online'), class: 'fleet-card-head')
+	$meta = tag('div', tag('span', 'Phlo '.($feed['phlo'] ?? '?'), class: 'fleet-tag').tag('span', count($apps).' hosts', class: 'fleet-tag').$chips, class: 'fleet-meta')
+	$rows = $errs ? loop($errs, fn($x, $app) => tag('div', tag('span', $app, class: 'fleet-err-app').tag('span', (int)($x['unique'] ?? 0).'u / '.(int)($x['occurrences'] ?? 0).'occ', class: 'fleet-err-num'), class: 'fleet-err-row'), void) : tag('div', 'geen fouten', class: 'fleet-err-none')
+	$errBox = tag('div', tag('div', static::icon('alert', 13).tag('span', 'Errors ('.$errTotal.')'), class: 'fleet-err-head').$rows, class: 'fleet-errs')
+	return tag('div', $head.$meta.$errBox, class: 'fleet-card')
+}
+
+static fleetSection {
+	$peers = %creds->fleet ?? null
+	if (!$peers) return void
+	$cards = void
+	foreach ($peers AS $name => $peer) $cards .= static::fleetCard($name, fleet::pull($name))
+	if (!$cards) return void
+	$h = tag('div', tag('h2', static::icon('server', 20, 'blue').tag('span', 'Fleet'), class: 'st-title').tag('span', count($peers->objKeys()).' nodes', class: 'st-badge'), class: 'st-head')
+	return tag('section', $h.tag('div', $cards, class: 'fleet-grid'), class: 'sw-card st-card')
+}
+
 route both GET overview {
 	%app->active = 'overview'
 	$local = %MySQL->record(table: 'metrics', where: "server='dev'", order: 'checked DESC', limit: '1')
@@ -110,7 +137,8 @@ route both GET overview {
 	$titleBlock = tag('div', tag('h1', static::icon('activity', 26, 'blue').tag('span', 'Centraal Systeem Dashboard', class: 'grad'), class: 'dash-title').tag('p', 'Real-time monitoring van servers en applicaties', class: 'dash-sub'))
 	$update = tag('div', static::icon('refresh', 16, 'muted').tag('span', 'Laatste update: '.tag('span', date('H:i:s'), class: 'upd-time')), class: 'dash-update')
 	$head = tag('header', $titleBlock.$update, class: 'dash-head')
-	main(tag('div', $head.tag('div', $servers.$sites, class: 'dash-cols'), class: 'dash'), 'Overzicht')
+	$fleet = static::fleetSection()
+	main(tag('div', $head.tag('div', $servers.$sites, class: 'dash-cols').$fleet, class: 'dash'), 'Overzicht')
 }
 
 <style>
@@ -475,5 +503,93 @@ route both GET overview {
 .ov-offline {
 	color: $muted
 	padding: 1rem 0
+}
+.fleet-grid {
+	display: grid
+	gap: 1rem
+	grid-template-columns: repeat(auto-fill, minmax(280px, 1fr))
+	padding: 1.25rem
+}
+.fleet-card {
+	background: $bg
+	border: 1px solid $border
+	border-radius: 10px
+	display: flex
+	flex-direction: column
+	gap: .75rem
+	padding: 1rem
+}
+.fleet-card.off: opacity: .55
+.fleet-card-head {
+	align-items: center
+	display: flex
+	justify-content: space-between
+}
+.fleet-name {
+	align-items: center
+	color: $text
+	display: flex
+	font-weight: 700
+	gap: .5rem
+}
+.fleet-meta {
+	align-items: center
+	display: flex
+	flex-wrap: wrap
+	gap: .4rem
+}
+.fleet-tag {
+	background: $surface
+	border: 1px solid $border
+	border-radius: 6px
+	color: $muted
+	font-size: .72rem
+	padding: .15rem .5rem
+}
+.fleet-env {
+	border-radius: 6px
+	font-size: .72rem
+	font-weight: 600
+	padding: .15rem .5rem
+}
+.fleet-env.prod {
+	background: color-mix(in srgb, $success 20%, transparent)
+	color: $success
+}
+.fleet-env.stage {
+	background: color-mix(in srgb, $warn 20%, transparent)
+	color: $warn
+}
+.fleet-env.dev {
+	background: color-mix(in srgb, $primary 20%, transparent)
+	color: $primary
+}
+.fleet-errs {
+	border-top: 1px solid $border
+	display: flex
+	flex-direction: column
+	gap: .3rem
+	padding-top: .6rem
+}
+.fleet-err-head {
+	align-items: center
+	color: $muted
+	display: flex
+	font-size: .75rem
+	gap: .35rem
+}
+.fleet-err-row {
+	display: flex
+	font-size: .8rem
+	justify-content: space-between
+}
+.fleet-err-app: color: $text
+.fleet-err-num {
+	color: $error
+	font-family: monospace
+}
+.fleet-err-none {
+	color: $muted
+	font-size: .8rem
 }
 </style>
