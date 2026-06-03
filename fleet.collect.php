@@ -1,6 +1,6 @@
 <?php
 
-function fleet_ping(array $hosts): array {
+function fleet_ping(array $hosts, bool $local = false): array {
 	$hosts = array_values(array_unique($hosts));
 	if (!$hosts || !function_exists('curl_multi_init')) return [];
 	$mh = curl_multi_init();
@@ -10,7 +10,7 @@ function fleet_ping(array $hosts): array {
 		curl_setopt_array($ch, [
 			CURLOPT_URL => 'https://'.$host.'/',
 			CURLOPT_NOBODY => true,
-			CURLOPT_RESOLVE => [$host.':443:127.0.0.1'],
+			CURLOPT_RESOLVE => $local ? [$host.':443:127.0.0.1'] : [],
 			CURLOPT_SSL_VERIFYPEER => false,
 			CURLOPT_SSL_VERIFYHOST => false,
 			CURLOPT_FOLLOWLOCATION => false,
@@ -47,12 +47,6 @@ function fleet_collect(): array {
 				$apps[] = ['host' => $host, 'env' => $env, 'app' => basename($file, '.caddy')];
 			}
 		}
-	}
-
-	$ping = fleet_ping(array_column($apps, 'host'));
-	foreach ($apps as $i => $a){
-		$apps[$i]['code'] = $ping[$a['host']]['code'] ?? 0;
-		$apps[$i]['ms'] = $ping[$a['host']]['ms'] ?? 0;
 	}
 
 	$errors = [];
