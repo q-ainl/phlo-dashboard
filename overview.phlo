@@ -59,10 +59,27 @@ static siteRow($a){
 	return tag('tr', $name.$env.$st)
 }
 
+static groupAliases($apps){
+	$groups = []
+	foreach ($apps AS $a){
+		$base = preg_replace('/^www\./', '', (string)($a['host'] ?? ''))
+		$a['host'] = $base
+		$cur = $groups[$base] ?? null
+		if (!$cur){
+			$groups[$base] = $a
+			continue
+		}
+		$curRedir = (int)$cur['code'] >= 300 && (int)$cur['code'] < 400
+		$newRedir = (int)$a['code'] >= 300 && (int)$a['code'] < 400
+		if ($curRedir && !$newRedir) $groups[$base] = $a
+	}
+	return array_values($groups)
+}
+
 static sitesTable($apps){
 	if (!$apps) return tag('p', 'geen sites', class: 'sw-offline')
 	$head = tag('tr', tag('th', 'Applicatie').tag('th', 'Env', class: 'c').tag('th', 'Status', class: 'c'))
-	$body = loop($apps, fn($a) => static::siteRow($a), void)
+	$body = loop(static::groupAliases($apps), fn($a) => static::siteRow($a), void)
 	return tag('div', tag('table', tag('thead', $head).tag('tbody', $body)), class: 'st-scroll')
 }
 
