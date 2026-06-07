@@ -12,7 +12,7 @@ static lookup($IP){
 	return $record
 }
 
-static objFilters => arr(real: arr(title: 'Echte bezoekers', filter: 'changed >= created AND changed - created > 33 AND host NOT LIKE "dev.%" AND IP NOT IN ("87.212.163.36", "217.122.154.229")'), me: arr(title: "Geen $_SERVER[REMOTE_ADDR]", filter: "ip!='$_SERVER[REMOTE_ADDR]'")) + create(static::column(columns: 'host', where: 'changed >= created AND changed - created > 33 AND host NOT LIKE "dev.%" AND host NOT LIKE "%.qdev.nl"', group: 'host', order: 'COUNT(id) DESC', limit: '12'), fn($host) => $host, fn($host) => arr(title: $host, filter: "host='$host'"))
+static objFilters => arr(real: arr(title: 'Echte bezoekers', filter: 'changed >= created AND changed - created > 33 AND host NOT LIKE "dev.%" AND IP NOT IN ("87.212.163.36", "217.122.154.229")'), me: arr(title: "Geen $_SERVER[REMOTE_ADDR]", filter: "ip!='$_SERVER[REMOTE_ADDR]'"))
 
 static titleList = 'Bezoekers'
 static titleRecord = 'Bezoeker'

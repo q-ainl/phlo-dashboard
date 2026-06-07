@@ -1,0 +1,115 @@
+@ extends: model
+@ summary: Control-dashboard gebruiker - multi-user + rollen + rechten op servers/subdashboards.
+
+view: $this->displayName
+
+static table = 'users'
+static order = 'name ASC'
+static objValidate = true
+
+prop displayName => $this->name ?: $this->email
+prop serverIds => array_filter(array_map('trim', explode(',', (string)$this->allowed_servers)))
+prop moduleIds => array_filter(array_map('trim', explode(',', (string)$this->allowed_modules)))
+prop isAdmin => $this->role === 'admin'
+
+static authUser => (%session->user ?? null) ? user::record(id: %session->user) : null
+
+static verify($email, $password){
+	$email = trim((string)$email)
+	if (!$email || !trim((string)$password)) return null
+	$u = user::record(email: $email, active: 1)
+	if (!$u || !$u->password || !password_verify(trim((string)$password), (string)$u->password)) return null
+	return $u
+}
+
+static hash($password) => password_hash(trim((string)$password), PASSWORD_BCRYPT)
+
+static seed($name, $email, $password, $role = 'user', $servers = '', $modules = ''){
+	$email = trim((string)$email)
+	if (user::record(email: $email)) return obj(ok: false, error: 'e-mail bestaat al')
+	$id = token(10)
+	user::create(
+		id: $id,
+		name: trim((string)$name),
+		email: $email,
+		password: user::hash($password),
+		role: trim((string)$role),
+		allowed_servers: trim((string)$servers),
+		allowed_modules: trim((string)$modules),
+		active: 1,
+		created: time(),
+		changed: time(),
+	)
+	return obj(ok: true, id: $id, email: $email, role: trim((string)$role))
+}
+
+method canServer($node){
+	if (!$this->allowed_servers) return $this->role === 'admin'
+	return in_array($node, $this->serverIds)
+}
+
+method canModule($module){
+	if ($this->role === 'admin') return true
+	return !$this->allowed_modules || in_array($module, $this->moduleIds)
+}
+
+static schema => arr (
+	id: field (
+		type: 'token',
+		length: 10,
+		title: 'ID',
+		list: false,
+		record: false,
+	),
+	name: field (
+		type: 'text',
+		title: 'Naam',
+		length: 100,
+		required: true,
+		search: true,
+	),
+	email: field (
+		type: 'email',
+		title: 'E-mail',
+		required: true,
+		search: true,
+	),
+	password: field (
+		type: 'password',
+		title: 'Wachtwoord',
+		required: false,
+	),
+	role: field (
+		type: 'select',
+		title: 'Rol',
+		options: ['admin', 'user'],
+		default: 'user',
+	),
+	allowed_servers: field (
+		type: 'text',
+		title: 'Servers (CSV node-namen; leeg = geen)',
+		length: 255,
+		list: false,
+	),
+	allowed_modules: field (
+		type: 'text',
+		title: 'Modules (CSV; leeg = alle)',
+		length: 255,
+		list: false,
+	),
+	active: field (
+		type: 'bool',
+		title: 'Actief',
+		true: 'Aan',
+		false: 'Uit',
+	),
+	created: field (
+		type: 'datetime',
+		title: 'Aangemaakt',
+		list: false,
+	),
+	changed: field (
+		type: 'datetime',
+		title: 'Gewijzigd',
+	),
+)

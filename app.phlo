@@ -7,26 +7,47 @@ prop trans => %session->trans ?? 'cards'
 prop options = 'wss'
 prop version = '1.0.1'
 prop model = 'gpt-4o'
+prop publicPaths = ['wa', 'notify']
 
-prop models = ['visitor', 'domain']
-prop menu = [
-	'overview' => ['icon' => '🏠', 'uri' => 'overview',    'title' => 'Overzicht'],
-	'visitor'  => ['icon' => '👁️', 'uri' => 'visitors',   'title' => 'Bezoekers'],
-	'domain'   => ['icon' => '🌍', 'uri' => 'domains',     'title' => 'Domeinen'],
-	'site'     => ['icon' => '🌐', 'uri' => 'sites',       'title' => 'Sites'],
-]
+prop models = ['visitor', 'domain', 'user', 'subscription']
+prop menu => $this->navMenu
 
-method useQdev {
-	%creds->mysql->host = %creds->qdev->host
-	%creds->mysql->database = %creds->qdev->database
-	%creds->mysql->user = %creds->qdev->user
-	%creds->mysql->password = %creds->qdev->password
+method navMenu {
+	$u = auth::user()
+	if (!$u) return []
+	$full = [
+		'overview' => ['icon' => '🏠', 'uri' => 'overview', 'title' => 'Overzicht', 'admin' => false],
+		'visitor'  => ['icon' => '👁️', 'uri' => 'visitors', 'title' => 'Bezoekers', 'admin' => true],
+		'domain'   => ['icon' => '🌍', 'uri' => 'domains',  'title' => 'Domeinen', 'admin' => true],
+		'site'     => ['icon' => '🌐', 'uri' => 'sites',    'title' => 'Sites', 'admin' => true],
+		'whatsapp' => ['icon' => '💬', 'uri' => 'whatsapp', 'title' => 'WhatsApp', 'admin' => true],
+		'message'  => ['icon' => '🔔', 'uri' => 'messages', 'title' => 'Meldingen', 'admin' => false],
+		'subscription' => ['icon' => '📡', 'uri' => 'subscriptions', 'title' => 'Abonnementen', 'admin' => true],
+		'user'     => ['icon' => '👤', 'uri' => 'users',    'title' => 'Gebruikers', 'admin' => true],
+	]
+	$out = []
+	foreach ($full AS $key => $item){
+		if (($item['admin'] ?? false) && !$u->isAdmin) continue
+		if (!$u->canModule($key)) continue
+		$out[$key] = $item
+	}
+	return $out
+}
+
+method useExternalDb {
+	if (!(%creds->external ?? null)) return
+	%creds->mysql->host = %creds->external->host
+	%creds->mysql->database = %creds->external->database
+	%creds->mysql->user = %creds->external->user
+	%creds->mysql->password = %creds->external->password
 }
 
 %security->strict
 $this->token
 if (auth::check()) return
-%req->path === void || str_starts_with(%req->path, 'visitor') ? $this->useQdev() : null
+auth::authed() && auth::user()
+if (!auth::allows(%req->path)) return main('Geen toegang tot deze pagina.', 'Geen toegang')
+%req->path === void || str_starts_with(%req->path, 'visitor') ? $this->useExternalDb() : null
 if (app::route()) return
 if (%req->method !== 'GET') return apply(error: 'Invalid request')
 main('Page not found!')

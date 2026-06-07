@@ -64,8 +64,10 @@ function fleet_env(string $block): string {
 
 function fleet_caddy_apps(): array {
 	$apps = [];
+	$skip = ['us', 'control', 'whatsapp'];
 	foreach (glob(fleet_base().'/sites/*.caddy') as $file){
 		$appName = basename($file, '.caddy');
+		if (in_array($appName, $skip, true)) continue;
 		$blocks = [];
 		$hosts = null;
 		$buf = '';
@@ -81,12 +83,20 @@ function fleet_caddy_apps(): array {
 		if ($hosts !== null) $blocks[] = ['hosts' => $hosts, 'block' => $buf];
 		foreach ($blocks as $b){
 			$env = fleet_env($b['block']);
+			$hostnames = [];
 			foreach (explode(',', $b['hosts']) as $host){
 				$host = trim($host);
 				if ($host === '' || !str_contains($host, '.')) continue;
-				$he = str_starts_with($host, 'dev.') ? 'dev' : (str_starts_with($host, 'stage.') ? 'stage' : $env);
-				$apps[] = ['host' => $host, 'env' => $he, 'app' => $appName];
+				$hostnames[] = $host;
 			}
+			if (!$hostnames) continue;
+			$nonWww = array_values(array_filter($hostnames, fn($h) => !str_starts_with($h, 'www.')));
+			$candidates = $nonWww ?: $hostnames;
+			usort($candidates, fn($a, $c) => strlen($a) <=> strlen($c) ?: strcmp($a, $c));
+			$primary = $candidates[0];
+			$he = str_starts_with($primary, 'dev.') ? 'dev' : (str_starts_with($primary, 'stage.') ? 'stage' : $env);
+			$aliases = array_values(array_filter($hostnames, fn($h) => $h !== $primary));
+			$apps[] = ['host' => $primary, 'aliases' => $aliases, 'env' => $he, 'app' => $appName];
 		}
 	}
 	return $apps;
@@ -106,7 +116,7 @@ function fleet_collect(): array {
 			$lo = (string)($e['lastOccurred'] ?? '');
 			if ($lo > $latest) $latest = $lo;
 		}
-		$errors[basename(dirname(dirname($file)))] = ['unique' => count($data), 'occurrences' => $occ, 'latest' => $latest];
+		$errors[basename(dirname(dirname($file)))] = ['unique' => count($data), 'occurrences' => $occ, 'latest' => $latest, 'entries' => array_slice($data, 0, 100, true)];
 	}
 
 	$mem = ['MemTotal' => 0, 'MemAvailable' => 0];
@@ -122,12 +132,18 @@ function fleet_collect(): array {
 	$version = '?';
 	if (preg_match("/const phlo\\s*=\\s*'([^']+)'/", (string)@file_get_contents(fleet_base().'/phlo/phlo.php'), $vm)) $version = $vm[1];
 
+	$engineFiles = glob(fleet_base().'/phlo/*.php') ?: [fleet_base().'/phlo/phlo.php'];
+	$buildTs = 0;
+	foreach ($engineFiles as $ef) $buildTs = max($buildTs, (int)@filemtime($ef));
+	$build = $buildTs ? date('Y-m-d H:i', $buildTs) : '?';
+
 	$ini = @parse_ini_file(fleet_base().'/dashboard/data/creds.ini', true, INI_SCANNER_RAW);
 	$visitors = fleet_visitors(is_array($ini) ? ($ini['mysql'] ?? null) : null);
 
 	return [
 		'server' => gethostname(),
 		'phlo' => $version,
+		'build' => $build,
 		'time' => time(),
 		'visitors' => $visitors,
 		'metrics' => [
@@ -141,7 +157,29 @@ function fleet_collect(): array {
 		],
 		'apps' => $apps,
 		'errors' => $errors,
+		'whatsapp' => fleet_whatsapp(),
 	];
+}
+
+function fleet_whatsapp(): array {
+	$list = [];
+	foreach (glob(fleet_base().'/config/wa*.js') ?: [] as $f){
+		if (!preg_match("/\\(\\s*'([a-z0-9]+)'\\s*,\\s*(\\d+)\\s*,\\s*'([^']+)'/", (string)@file_get_contents($f), $m)) continue;
+		$port = (int)$m[2];
+		$ctx = stream_context_create(['http' => ['method' => 'GET', 'header' => 'secret: '.$m[3], 'timeout' => 3, 'ignore_errors' => true]]);
+		$res = ($h = @file_get_contents('http://127.0.0.1:'.$port.'/health', false, $ctx)) ? json_decode($h, true) : null;
+		$entry = ['instance' => $m[1], 'port' => $port, 'status' => is_array($res) ? (string)($res['status'] ?? 'onbekend') : 'offline'];
+		if (is_array($res)){
+			$entry['uptime'] = (int)($res['uptime'] ?? 0);
+			$entry['webhook'] = (bool)($res['webhook'] ?? false);
+			if (($res['status'] ?? '') !== 'ready'){
+				$qr = ($q = @file_get_contents('http://127.0.0.1:'.$port.'/qr', false, $ctx)) ? json_decode($q, true) : null;
+				if (is_array($qr) && !empty($qr['qr'])) $entry['qr'] = (string)$qr['qr'];
+			}
+		}
+		$list[] = $entry;
+	}
+	return $list;
 }
 
 if (!defined('FLEET_COLLECT_LIB')) echo json_encode(fleet_collect(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);

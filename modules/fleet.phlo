@@ -20,6 +20,23 @@ static feedData {
 	return fleet_collect()
 }
 
+# Federatie: een peer-node laat de master een master-user authenticeren voor één van zijn
+# subdashboards. De node tekent time.auth.email.module met zijn fleet-secret; geeft de matchende node-naam terug.
+static authFed($email, $module){
+	$time = (int)($_SERVER['HTTP_X_FLEET_TIME'] ?? 0)
+	$sign = (string)($_SERVER['HTTP_X_FLEET_SIGN'] ?? void)
+	if (!$time || $sign === void || abs(time() - $time) > 300) return false
+	$peers = static::peers()
+	if (!$peers) return false
+	$payload = $time.'.auth.'.(string)$email.'.'.(string)$module
+	foreach ($peers AS $name => $peer){
+		$secret = (string)($peer->secret ?? void)
+		if ($secret === void) continue
+		if (hash_equals(hash_hmac('sha256', $payload, $secret), $sign)) return $name
+	}
+	return false
+}
+
 static cached($name){
 	$file = data.'fleet/'.$name.'.json'
 	if (!is_file($file)) return null
@@ -27,6 +44,16 @@ static cached($name){
 	if (!is_array($data)) return null
 	$data['age'] = time() - (int)($data['time'] ?? 0)
 	return $data
+}
+
+static clearCachedErrors($name, $app = void){
+	$file = data.'fleet/'.$name.'.json'
+	if (!is_file($file)) return
+	$data = json_decode((string)file_get_contents($file), true)
+	if (!is_array($data)) return
+	if ($app !== void && $app !== '') unset($data['errors'][$app])
+	else $data['errors'] = []
+	file_put_contents($file, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))
 }
 
 static nodes {
@@ -109,6 +136,26 @@ route GET fleet feed {
 	return %res->render()
 }
 
+route POST fleet auth {
+	%security->api
+	%res->type = 'application/json'
+	$email = trim((string)(%payload->email ?? void))
+	$pass = (string)(%payload->password ?? void)
+	$module = trim((string)(%payload->module ?? void))
+	$node = static::authFed($email, $module)
+	if (!$node || !class_exists('user')){
+		%res->body = json_encode(['ok' => false, 'error' => 'unauthorized'])
+		return %res->render(401)
+	}
+	$u = user::verify($email, $pass)
+	if (!$u || !$u->active || !$u->canServer($node) || ($module !== '' && !$u->canModule($module))){
+		%res->body = json_encode(['ok' => false, 'error' => 'denied'])
+		return %res->render()
+	}
+	%res->body = json_encode(['ok' => true, 'user' => ['id' => $u->id, 'name' => $u->displayName, 'email' => $u->email, 'role' => $u->role]], JSON_UNESCAPED_UNICODE)
+	return %res->render()
+}
+
 route POST fleet manage {
 	%security->api
 	%res->type = 'application/json'
@@ -123,6 +170,12 @@ route POST fleet manage {
 }
 
 route async POST manage $node $command $app= {
+	$app ??= ''
 	$res = fleet::manage($node, $command, $app)
-	return ($res['ok'] ?? false) ? apply(toast: '✓ '.($res['msg'] ?? 'klaar')) : apply(error: ($res['msg'] ?? 'mislukt'))
+	if (!($res['ok'] ?? false)) return apply(error: ($res['msg'] ?? 'mislukt'))
+	if ($command === 'errors-reset'){
+		fleet::clearCachedErrors($node, $app)
+		return apply(toast: '✓ '.($res['msg'] ?? 'gewist'), outer: ['.dash' => overview::errorsView($node, $app)])
+	}
+	return apply(toast: '✓ '.($res['msg'] ?? 'klaar'))
 }

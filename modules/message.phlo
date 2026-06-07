@@ -1,0 +1,164 @@
+@ extends: model
+@ summary: Centrale meldingen - apps pushen via POST /notify (secret); ingelogde users zien hun server-gescopede inbox. Subscriptions (subscription-module) leveren hierin af.
+
+view: $this->title
+
+static table = 'messages'
+static order = 'created DESC'
+
+static levelCls($level) => ['error' => 'error', 'warn' => 'warn', 'order' => 'emerald', 'payment' => 'emerald', 'user' => 'blue'][(string)$level] ?? 'muted'
+
+static feed($limit = 100){
+	$u = auth::user()
+	if (!$u) return []
+	$out = []
+	foreach (message::records(order: 'created DESC', limit: $limit) AS $m){
+		if ($u->canServer((string)$m->server)) $out[] = $m
+	}
+	return $out
+}
+
+static unread {
+	$u = auth::user()
+	if (!$u) return 0
+	$n = 0
+	foreach (message::records(read_at: null, limit: 200) AS $m) if ($u->canServer((string)$m->server)) $n++
+	return $n
+}
+
+static inbox(){
+	$msgs = static::feed()
+	$rows = void
+	foreach ($msgs AS $m){
+		$cls = static::levelCls($m->level)
+		$src = tag('span', overview::icon('server', 12, 'muted').tag('span', $m->server), class: 'msg-src').tag('span', $m->app, class: 'msg-app').tag('span', age_human(time() - (int)$m->created).' geleden', class: 'msg-time')
+		$line = tag('span', $m->type, class: 'msg-badge '.$cls).tag('span', esc((string)$m->title), class: 'msg-title')
+		$body = trim((string)$m->body) !== '' ? tag('p', esc((string)$m->body), class: 'msg-body') : void
+		$rows .= tag('div', tag('div', $src, class: 'msg-head').tag('div', $line, class: 'msg-line').$body, class: 'msg-card '.$cls.($m->read_at ? '' : ' unread'))
+	}
+	$head = tag('header', tag('div', tag('h1', '🔔 Meldingen', class: 'dash-title').tag('p', count($msgs).' meldingen', class: 'dash-sub')), class: 'dash-head')
+	return tag('div', $head.tag('div', $rows ?: tag('p', 'Geen meldingen.', class: 'msg-empty'), class: 'msg-feed'), class: 'dash')
+}
+
+route both GET messages {
+	%app->active = 'message'
+	$out = static::inbox()
+	$u = auth::user()
+	if ($u) foreach (message::records(read_at: null, limit: 200) AS $m) if ($u->canServer((string)$m->server)) message::change('id=?', $m->id, read_at: time())
+	main($out, 'Meldingen')
+}
+
+route POST notify {
+	%security->api
+	$secret = (string)($_SERVER['HTTP_SECRET'] ?? void)
+	$expect = (string)(%creds->notify->secret ?? void)
+	if ($expect === void || !hash_equals($expect, $secret)) return error('Unauthorized', 401)
+	$p = %payload
+	$m = message::create(
+		id: token(10),
+		app: substr(trim((string)($p->app ?? 'onbekend')), 0, 60),
+		type: substr(trim((string)($p->type ?? 'info')), 0, 40),
+		level: substr(trim((string)($p->level ?? 'info')), 0, 20),
+		title: substr(trim((string)($p->title ?? '')), 0, 255),
+		body: trim((string)($p->body ?? '')),
+		server: substr(trim((string)($p->server ?? 'local')), 0, 40),
+		user_id: trim((string)($p->user ?? '')) ?: null,
+		read_at: null,
+		created: time(),
+	)
+	class_exists('subscription') && subscription::dispatch($m)
+	%res->type = 'application/json'
+	%res->body = json_encode(['ok' => true, 'id' => $m->id], JSON_UNESCAPED_SLASHES)
+	return %res->render()
+}
+
+static schema => arr (
+	id: field (type: 'token', length: 10, title: 'ID', list: false, record: false),
+	app: field (type: 'text', title: 'App', length: 60),
+	type: field (type: 'text', title: 'Type', length: 40),
+	level: field (type: 'text', title: 'Niveau', length: 20),
+	title: field (type: 'text', title: 'Titel', length: 255, search: true),
+	body: field (type: 'text', title: 'Inhoud', length: 65000, list: false),
+	server: field (type: 'text', title: 'Server', length: 40),
+	user_id: field (type: 'text', title: 'Gebruiker', length: 10, list: false),
+	read_at: field (type: 'number', title: 'Gelezen', list: false),
+	created: field (type: 'datetime', title: 'Tijd'),
+)
+
+<style>
+.msg-feed {
+	display: flex
+	flex-direction: column
+	gap: .6rem
+}
+.msg-card {
+	background: $surface
+	border: 1px solid $border
+	border-left: 3px solid $border
+	border-radius: 10px
+	padding: .75rem 1rem
+}
+.msg-card.error: border-left-color: $error
+.msg-card.warn: border-left-color: $warn
+.msg-card.emerald: border-left-color: $success
+.msg-card.blue: border-left-color: $primary
+.msg-card.unread {
+	background: color-mix(in srgb, $surface 90%, $primary)
+}
+.msg-head {
+	align-items: center
+	color: $muted
+	display: flex
+	font-size: .75rem
+	gap: .6rem
+	margin-bottom: .35rem
+}
+.msg-src {
+	align-items: center
+	display: inline-flex
+	font-family: monospace
+	gap: .25rem
+}
+.msg-app {
+	background: $bg
+	border-radius: 4px
+	padding: .05rem .4rem
+}
+.msg-time: margin-left: auto
+.msg-line {
+	align-items: center
+	display: flex
+	gap: .5rem
+}
+.msg-badge {
+	border-radius: 999px
+	font-size: .68rem
+	font-weight: 700
+	padding: .1rem .5rem
+	text-transform: uppercase
+}
+.msg-badge.error: background: color-mix(in srgb, $error 20%, transparent)
+.msg-badge.error: color: $error
+.msg-badge.warn: background: color-mix(in srgb, $warn 20%, transparent)
+.msg-badge.warn: color: $warn
+.msg-badge.emerald: background: color-mix(in srgb, $success 20%, transparent)
+.msg-badge.emerald: color: $success
+.msg-badge.blue: background: color-mix(in srgb, $primary 20%, transparent)
+.msg-badge.blue: color: $primary
+.msg-badge.muted: background: $bg
+.msg-badge.muted: color: $muted
+.msg-title {
+	color: $text
+	font-weight: 600
+}
+.msg-body {
+	color: $muted
+	font-size: .85rem
+	margin: .4rem 0 0
+	white-space: pre-wrap
+}
+.msg-empty {
+	color: $muted
+	padding: 2rem
+}
+</style>

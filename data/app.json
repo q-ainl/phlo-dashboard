@@ -28,6 +28,8 @@
         "DOM/websocket",
         "fields/field",
         "fields/bool",
+        "fields/email",
+        "fields/password",
         "fields/child",
         "fields/date",
         "fields/datetime",
@@ -73,11 +75,25 @@
         "transitions/slide",
         "transitions/zoom",
         "transitions/flip",
-        "transitions/glide"
+        "transitions/glide",
+        "auth",
+        "fleet",
+        "wa",
+        "settings",
+        "domain",
+        "visitor",
+        "overview",
+        "site",
+        "host",
+        "whatsapp",
+        "user",
+        "message",
+        "subscription"
     ],
     "paths": {
         "resources": [
-            "/srv/control/CMS/"
+            "/srv/control/CMS/",
+            "%app/modules/"
         ]
     },
     "icons": "/srv/control/CMS/icons/"

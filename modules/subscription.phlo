@@ -1,0 +1,47 @@
+@ extends: model
+@ summary: Abonnementen - een user abonneert op (server, event) en krijgt nieuwe meldingen proactief geleverd (dashboard-inbox is altijd al gescoped; whatsapp = proactieve push). dispatch() draait bij elke nieuwe melding.
+
+view: $this->label
+
+static table = 'subscriptions'
+static order = 'created DESC'
+
+prop label => $this->user_id.' · '.$this->server.'/'.$this->event.' → '.$this->channel
+
+static matches($message){
+	$out = []
+	foreach (subscription::records(active: 1) AS $s){
+		if ((string)$s->server !== '*' && (string)$s->server !== (string)$message->server) continue
+		if ((string)$s->event !== '*' && (string)$s->event !== (string)$message->type && (string)$s->event !== (string)$message->level) continue
+		$out[] = $s
+	}
+	return $out
+}
+
+static dispatch($message){
+	foreach (subscription::matches($message) AS $s){
+		if ((string)$s->channel === 'whatsapp' && trim((string)$s->target) !== '') subscription::sendWhatsapp((string)$s->target, $message)
+	}
+}
+
+static sendWhatsapp($chatId, $message){
+	$c = %creds->alerts ?? null
+	$url = (string)($c->url ?? void)
+	$secret = (string)($c->secret ?? void)
+	if ($url === void || $secret === void) return
+	$text = '*'.strtoupper((string)$message->level).' · '.$message->server.'*'.lf.(string)$message->title.(trim((string)$message->body) !== '' ? lf.(string)$message->body : void)
+	$ctx = stream_context_create(['http' => ['method' => 'POST', 'header' => "Content-Type: application/json\r\nsecret: ".$secret, 'content' => json_encode(['to' => $chatId, 'text' => $text], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), 'timeout' => 10, 'ignore_errors' => true]])
+	@file_get_contents(rtrim($url, '/').'/text', false, $ctx)
+}
+
+static schema => arr (
+	id: field (type: 'token', length: 10, title: 'ID', list: false, record: false),
+	user_id: field (type: 'text', title: 'Gebruiker-ID', length: 10, required: true),
+	server: field (type: 'text', title: 'Server (* = alle)', length: 40, default: '*'),
+	event: field (type: 'text', title: 'Event (error / order / * )', length: 40, default: '*'),
+	channel: field (type: 'select', title: 'Kanaal', options: ['whatsapp', 'dashboard'], default: 'whatsapp'),
+	target: field (type: 'text', title: 'WhatsApp chatId', length: 60, list: false),
+	active: field (type: 'bool', title: 'Actief', true: 'Aan', false: 'Uit'),
+	created: field (type: 'datetime', title: 'Aangemaakt', list: false),
+	changed: field (type: 'datetime', title: 'Gewijzigd'),
+)

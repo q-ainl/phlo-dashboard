@@ -1,0 +1,792 @@
+static icons => [
+	'activity' => '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+	'server' => '<rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/>',
+	'cpu' => '<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/>',
+	'harddrive' => '<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/>',
+	'clock' => '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+	'globe' => '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+	'users' => '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+	'check' => '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+	'x' => '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+	'alert' => '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+	'lock' => '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+	'refresh' => '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+	'arrow' => '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
+]
+
+static icon($name, $size = 16, $class = void) => '<svg class="ic'.($class ? ' '.$class : void).'" width="'.$size.'" height="'.$size.'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'.(static::icons()[$name] ?? void).'</svg>'
+
+static pct($used, $total) => $total > 0 ? min(100, (int)round($used / $total * 100)) : 0
+
+static loadPct($m) => ($m->cpu_count ?? 0) > 0 ? min(100, (int)round(($m->load1 ?? 0) / $m->cpu_count * 100)) : 0
+
+static bar($label, $pct, $ic, $variant, $detail){
+	$level = $variant ?: ($pct > 85 ? 'high' : ($pct > 70 ? 'mid' : 'ok'))
+	$right = ($detail ? tag('span', $detail, class: 'pb-detail') : void).tag('span', $pct.'%', class: 'pb-val')
+	$top = tag('div', tag('span', static::icon($ic, 15, 'muted').tag('span', $label), class: 'pb-label').tag('span', $right, class: 'pb-right'), class: 'pb-top')
+	$track = tag('div', tag('div', void, class: 'pb-fill', style: 'width:'.$pct.'%'), class: 'pb-track')
+	return tag('div', $top.$track, class: 'pb '.$level)
+}
+
+static envState($code){
+	$c = (int)$code
+	if ($c === 0 || $c >= 500) return 'down'
+	if ($c === 401 || $c === 403) return 'auth'
+	if ($c >= 400) return 'warn'
+	return 'up'
+}
+
+static kpiStat($ic, $val, $cls = void) => tag('span', static::icon($ic, 14).tag('span', $val), class: 'kpi-stat'.($cls ? ' '.$cls : void))
+
+static envBadge($env) => tag('span', $env, class: 'env-badge '.$env)
+
+static statusCell($code, $ms){
+	$state = static::envState($code)
+	$c = (int)$code
+	return tag('span', tag('span', void, class: 'st-dot '.$state).tag('span', $c ?: 'down', class: 'sc-code '.$state).tag('span', $ms.'ms', class: 'sc-ms'), class: 'sc')
+}
+
+static serverCard($node){
+	$feed = fleet::cached($node) ?: ['label' => $node, 'ok' => false]
+	$label = $feed['label'] ?? $node
+	$ok = $feed['ok'] ?? false
+	$pill = tag('span', tag('span', void, class: 'sw-dot').tag('span', $ok ? 'online' : 'offline'), class: 'sw-pill '.($ok ? 'online' : 'offline'))
+	$titles = tag('div', tag('span', $label, class: 'kpi-name').tag('span', $ok ? (($feed['server'] ?? '?').' · build '.($feed['build'] ?? $feed['phlo'] ?? '?')) : 'niet bereikbaar', class: 'kpi-sub', title: 'Phlo '.($feed['phlo'] ?? '?')), class: 'kpi-titles')
+	$head = tag('div', tag('div', static::icon('server', 18, 'blue').$titles, class: 'kpi-id').$pill, class: 'kpi-head')
+	if (!$ok) return tag('a', tag('div', $head, class: 'kpi-card off'), href: '/node/'.$node, class: 'kpi-link async')
+	$m = (object)($feed['metrics'] ?? [])
+	$errTotal = 0
+	foreach (($feed['errors'] ?? []) AS $x) $errTotal += (int)($x['occurrences'] ?? 0)
+	$vis = (int)array_sum($feed['visitors'] ?? [])
+	$errStat = $errTotal ? tag('span', static::icon('alert', 14).tag('span', number_format($errTotal, 0, ',', '.')), class: 'kpi-stat bad', title: number_format($errTotal, 0, ',', '.').' errors') : tag('span', static::icon('check', 14, 'emerald').tag('span', '0'), class: 'kpi-stat good', title: 'Geen errors')
+	$hosts = count($feed['apps'] ?? [])
+	$stats = tag('div', static::kpiStat('server', $hosts).static::kpiStat('clock', age_human($m->uptime_sec ?? 0)).static::kpiStat('users', number_format($vis, 0, ',', '.')).$errStat, class: 'kpi-stats')
+	$bars = tag('div', static::bar('CPU', static::loadPct($m), 'cpu', void, ($m->load1 ?? 0).' / '.($m->cpu_count ?? 0)).static::bar('Geheugen', static::pct($m->mem_used ?? 0, $m->mem_total ?? 0), 'activity', void, size_human($m->mem_used ?? 0).' / '.size_human($m->mem_total ?? 0)).static::bar('Opslag', static::pct($m->disk_used ?? 0, $m->disk_total ?? 0), 'harddrive', 'disk', size_human($m->disk_used ?? 0).' / '.size_human($m->disk_total ?? 0)), class: 'sw-bars')
+	return tag('a', tag('div', $head.$stats.$bars, class: 'kpi-card'), href: '/node/'.$node, class: 'kpi-link async')
+}
+
+static serversGrid() => tag('section', loop(auth::servers(), fn($node) => static::serverCard($node), void), class: 'kpi-grid')
+
+static hostsPanel(){
+	$groups = []
+	foreach (auth::servers() AS $node){
+		$feed = fleet::cached($node)
+		if (!($feed['ok'] ?? false)) continue
+		$label = $feed['label'] ?? $node
+		$visitors = $feed['visitors'] ?? []
+		$errors = $feed['errors'] ?? []
+		foreach (($feed['apps'] ?? []) AS $a){
+			$host = (string)($a['host'] ?? '')
+			$app = (string)($a['app'] ?? '')
+			$aliases = (array)($a['aliases'] ?? [])
+			$vis = (int)($visitors[$host] ?? 0) + array_sum(array_map(fn($al) => (int)($visitors[$al] ?? 0), $aliases))
+			$groups[$app][] = ['node' => $node, 'label' => $label, 'host' => $host, 'aliases' => $aliases, 'env' => (string)($a['env'] ?? 'prod'), 'code' => (int)($a['code'] ?? 0), 'ms' => (int)($a['ms'] ?? 0), 'vis' => $vis, 'errOcc' => (int)($errors[$app]['occurrences'] ?? 0)]
+		}
+	}
+	ksort($groups)
+	$envOrder = ['dev' => 0, 'stage' => 1, 'prod' => 2]
+	$rows = void
+	$count = 0
+	foreach ($groups AS $app => $hosts){
+		usort($hosts, fn($x, $y) => [$envOrder[$x['env']] ?? 9, $x['host']] <=> [$envOrder[$y['env']] ?? 9, $y['host']])
+		$gVis = array_sum(array_column($hosts, 'vis'))
+		$gErr = array_sum(array_column($hosts, 'errOcc'))
+		$gFlt = strtolower($app.' '.implode(' ', array_column($hosts, 'host')).' '.implode(' ', array_column($hosts, 'env')))
+		$gMeta = tag('span', count($hosts).'×', class: 'g-count').($gVis ? tag('span', static::icon('users', 12).number_format($gVis, 0, ',', '.'), class: 'g-vis') : void).($gErr ? tag('span', static::icon('alert', 12).number_format($gErr, 0, ',', '.'), class: 'g-err') : void)
+		$rows .= tag('tr', tag('td', tag('span', $app, class: 'g-name').$gMeta, colspan: '6'), class: 'g-row', data_filter: $gFlt)
+		foreach ($hosts AS $hh){
+			$errCell = $hh['errOcc'] ? tag('a', tag('span', static::icon('alert', 13).tag('span', number_format($hh['errOcc'], 0, ',', '.')), class: 'err-badge'), href: '/errors/'.$hh['node'].'/'.$app, class: 'err-link async', title: 'Bekijk errors van '.$app) : tag('span', '0', class: 'err-zero')
+			$aliasBadge = ($hh['aliases'] ?? []) ? tag('span', '+'.count($hh['aliases']), class: 'h-alias', title: implode(', ', $hh['aliases'])) : void
+			$hostCell = tag('a', static::icon('globe', 14, 'blue').tag('span', $hh['host'], class: 'h-host'), href: 'https://'.$hh['host'].'/', target: '_blank', class: 'h-link', title: 'Open '.$hh['host']).$aliasBadge
+			$visCell = tag('span', static::icon('users', 14, 'blue').tag('span', number_format($hh['vis'], 0, ',', '.'), class: 'vis-num'), class: 'vis')
+			$flt = strtolower($app.' '.$hh['label'].' '.$hh['host'].' '.$hh['env'])
+			$rows .= tag('tr', tag('td', tag('span', $hh['label'], class: 'h-server')).tag('td', $hostCell).tag('td', static::envBadge($hh['env']), class: 'c').tag('td', static::statusCell($hh['code'], $hh['ms']), class: 'c').tag('td', $visCell, class: 'c').tag('td', $errCell, class: 'c'), class: 'h-row', data_filter: $flt)
+			$count++
+		}
+	}
+	$head = tag('tr', tag('th', 'Server').tag('th', 'Host').tag('th', 'Env', class: 'c').tag('th', 'Status', class: 'c').tag('th', 'Bezoekers', class: 'c').tag('th', 'Errors', class: 'c'))
+	$filter = tag('input', type: 'search', placeholder: 'Filter hosts...', class: 'flt')
+	$tools = tag('div', $filter.tag('span', $count.' hosts · '.count($groups).' apps', class: 'st-badge'), class: 'st-tools')
+	$h = tag('div', tag('h2', static::icon('globe', 20, 'blue').tag('span', 'Hosts'), class: 'st-title').$tools, class: 'st-head')
+	return tag('section', $h.tag('div', tag('table', tag('thead', $head).tag('tbody', $rows)), class: 'st-scroll'), class: 'sw-card st-card')
+}
+
+static errorRow($e, $first){
+	$flt = strtolower(($e['_app'] ?? '').' '.($e['file'] ?? '').' '.($e['path'] ?? '').' '.($e['msg'] ?? ''))
+	$cells = $first.tag('td', tag('code', $e['msg'] ?? void, class: 'err-msg')).tag('td', tag('span', number_format((int)($e['count'] ?? 0), 0, ',', '.'), class: 'err-n'), class: 'c').tag('td', tag('span', $e['lastOccurred'] ?? void, class: 'err-when'), class: 'c')
+	return tag('tr', $cells, data_filter: $flt)
+}
+
+static errorsView($node, $app = void){
+	$feed = fleet::cached($node) ?: ['label' => $node, 'ok' => false]
+	$label = $feed['label'] ?? $node
+	$errors = $feed['errors'] ?? []
+	$canManage = in_array($feed['mode'] ?? '', ['self', 'pull'])
+	$single = ($app ?? void) !== void
+	$rows = void
+	$count = 0
+	if ($single){
+		$entries = array_values($errors[$app]['entries'] ?? [])
+		usort($entries, fn($a, $b) => ((int)($b['count'] ?? 0)) <=> ((int)($a['count'] ?? 0)))
+		foreach ($entries AS $e){
+			$first = tag('td', tag('code', $e['file'] ?? void, class: 'err-file')).tag('td', tag('code', $e['path'] ?? void, class: 'err-path'))
+			$rows .= static::errorRow($e, $first)
+			$count++
+		}
+		$head = tag('tr', tag('th', 'Bestand').tag('th', 'Pad').tag('th', 'Melding').tag('th', 'Aantal', class: 'c').tag('th', 'Laatst', class: 'c'))
+		$title = 'Errors: '.$app
+	}
+	else {
+		$all = []
+		foreach ($errors AS $appName => $info){
+			foreach (array_values($info['entries'] ?? []) AS $e){
+				$e['_app'] = $appName
+				$all[] = $e
+			}
+		}
+		usort($all, fn($a, $b) => ((int)($b['count'] ?? 0)) <=> ((int)($a['count'] ?? 0)))
+		foreach ($all AS $e){
+			$first = tag('td', tag('a', $e['_app'] ?? void, href: '/errors/'.$node.'/'.($e['_app'] ?? ''), class: 'h-server async')).tag('td', tag('code', $e['file'] ?? void, class: 'err-file'))
+			$rows .= static::errorRow($e, $first)
+			$count++
+		}
+		$head = tag('tr', tag('th', 'App').tag('th', 'Bestand').tag('th', 'Melding').tag('th', 'Aantal', class: 'c').tag('th', 'Laatst', class: 'c'))
+		$title = 'Alle errors'
+	}
+	$back = tag('a', static::icon('arrow', 15, 'muted').tag('span', 'Terug naar overzicht'), href: '/overview', class: 'err-back async')
+	$wipe = $canManage && $count ? tag('button', static::icon('x', 14).tag('span', 'Wis log'), type: 'button', data_post: 'manage/'.$node.'/errors-reset'.($single ? '/'.$app : void), data_confirm: 'Errors'.($single ? ' van '.$app : void).' op '.$label.' wissen?', class: 'mg-btn') : void
+	$filter = tag('input', type: 'search', placeholder: 'Filter errors...', class: 'flt')
+	$tools = tag('div', $filter.tag('span', $count.' entries', class: 'st-badge').$wipe, class: 'st-tools')
+	$sub = tag('span', $label.($single ? ' · '.$app : void), class: 'kpi-sub')
+	$h = tag('div', tag('div', tag('h2', static::icon('alert', 20, $count ? 'error' : 'emerald').tag('span', $title), class: 'st-title').$sub, class: 'err-htitle').$tools, class: 'st-head')
+	$body = $count ? tag('div', tag('table', tag('thead', $head).tag('tbody', $rows)), class: 'st-scroll') : tag('p', static::icon('check', 16, 'emerald').tag('span', 'Geen errors geregistreerd.'), class: 'err-empty')
+	return tag('div', $back.tag('section', $h.$body, class: 'sw-card st-card'), class: 'dash')
+}
+
+static waState($status) => $status === 'ready' ? 'up' : ($status === 'offline' || $status === 'onbekend' ? 'down' : 'warn')
+
+static nodeHostsTable($node, $feed){
+	$visitors = $feed['visitors'] ?? []
+	$errors = $feed['errors'] ?? []
+	$groups = []
+	foreach (($feed['apps'] ?? []) AS $a){
+		$host = $a['host'] ?? ''
+		$app = $a['app'] ?? ''
+		$aliases = (array)($a['aliases'] ?? [])
+		$vis = (int)($visitors[$host] ?? 0) + array_sum(array_map(fn($al) => (int)($visitors[$al] ?? 0), $aliases))
+		$groups[$app][] = ['host' => $host, 'aliases' => $aliases, 'env' => $a['env'] ?? 'prod', 'code' => (int)($a['code'] ?? 0), 'ms' => (int)($a['ms'] ?? 0), 'vis' => $vis, 'errOcc' => (int)($errors[$app]['occurrences'] ?? 0)]
+	}
+	ksort($groups)
+	$envOrder = ['dev' => 0, 'stage' => 1, 'prod' => 2]
+	$rows = void
+	$count = 0
+	foreach ($groups AS $app => $hosts){
+		usort($hosts, fn($x, $y) => [$envOrder[$x['env']] ?? 9, $x['host']] <=> [$envOrder[$y['env']] ?? 9, $y['host']])
+		$gVis = array_sum(array_column($hosts, 'vis'))
+		$gErr = array_sum(array_column($hosts, 'errOcc'))
+		$gFlt = strtolower($app.' '.implode(' ', array_column($hosts, 'host')).' '.implode(' ', array_column($hosts, 'env')))
+		$gMeta = tag('span', count($hosts).'×', class: 'g-count').($gVis ? tag('span', static::icon('users', 12).number_format($gVis, 0, ',', '.'), class: 'g-vis') : void).($gErr ? tag('span', static::icon('alert', 12).number_format($gErr, 0, ',', '.'), class: 'g-err') : void)
+		$rows .= tag('tr', tag('td', tag('span', $app, class: 'g-name').$gMeta, colspan: '5'), class: 'g-row', data_filter: $gFlt)
+		foreach ($hosts AS $hh){
+			$errCell = $hh['errOcc'] ? tag('a', tag('span', static::icon('alert', 13).tag('span', number_format($hh['errOcc'], 0, ',', '.')), class: 'err-badge'), href: '/errors/'.$node.'/'.$app, class: 'err-link async', title: 'Bekijk errors van '.$app) : tag('span', '0', class: 'err-zero')
+			$aliasBadge = $hh['aliases'] ? tag('span', '+'.count($hh['aliases']), class: 'h-alias', title: implode(', ', $hh['aliases'])) : void
+			$hostCell = tag('a', static::icon('globe', 14, 'blue').tag('span', $hh['host'], class: 'h-host'), href: 'https://'.$hh['host'].'/', target: '_blank', class: 'h-link', title: 'Open '.$hh['host']).$aliasBadge
+			$visCell = tag('span', static::icon('users', 14, 'blue').tag('span', number_format($hh['vis'], 0, ',', '.'), class: 'vis-num'), class: 'vis')
+			$flt = strtolower($app.' '.$hh['host'].' '.$hh['env'])
+			$rows .= tag('tr', tag('td', $hostCell).tag('td', static::envBadge($hh['env']), class: 'c').tag('td', static::statusCell($hh['code'], $hh['ms']), class: 'c').tag('td', $visCell, class: 'c').tag('td', $errCell, class: 'c'), class: 'h-row', data_filter: $flt)
+			$count++
+		}
+	}
+	$head = tag('tr', tag('th', 'Host').tag('th', 'Env', class: 'c').tag('th', 'Status', class: 'c').tag('th', 'Bezoekers', class: 'c').tag('th', 'Errors', class: 'c'))
+	$filter = tag('input', type: 'search', placeholder: 'Filter hosts...', class: 'flt')
+	$tools = tag('div', $filter.tag('span', $count.' hosts · '.count($groups).' apps', class: 'st-badge'), class: 'st-tools')
+	$h = tag('div', tag('h2', static::icon('globe', 20, 'blue').tag('span', 'Hosts'), class: 'st-title').$tools, class: 'st-head')
+	return tag('section', $h.tag('div', tag('table', tag('thead', $head).tag('tbody', $rows)), class: 'st-scroll'), class: 'sw-card st-card')
+}
+
+static nodeWaPanel($node, $feed){
+	$was = $feed['whatsapp'] ?? []
+	if (!$was) return void
+	$rows = void
+	foreach ($was AS $w){
+		$st = $w['status'] ?? 'onbekend'
+		$state = static::waState($st)
+		$up = isset($w['uptime']) ? age_human((int)$w['uptime']) : '-'
+		$wh = array_key_exists('webhook', $w) ? ($w['webhook'] ? tag('span', static::icon('check', 13, 'emerald').tag('span', 'webhook'), class: 'wh-on') : tag('span', static::icon('x', 13).tag('span', 'geen webhook'), class: 'wh-off')) : tag('span', '-', class: 'err-zero')
+		$stCell = tag('span', tag('span', void, class: 'st-dot '.$state).tag('span', $st, class: 'sc-code '.$state), class: 'sc')
+		$rows .= tag('tr', tag('td', tag('span', $w['instance'] ?? '?', class: 'g-name')).tag('td', tag('code', ':'.($w['port'] ?? '?'), class: 'err-path'), class: 'c').tag('td', $stCell, class: 'c').tag('td', tag('span', $up, class: 'err-when'), class: 'c').tag('td', $wh, class: 'c'))
+	}
+	$head = tag('tr', tag('th', 'Instance').tag('th', 'Poort', class: 'c').tag('th', 'Status', class: 'c').tag('th', 'Uptime', class: 'c').tag('th', 'Inbound', class: 'c'))
+	$h = tag('div', tag('h2', static::icon('activity', 20, 'blue').tag('span', 'WhatsApp-bots'), class: 'st-title').tag('span', count($was).' engines', class: 'st-badge'), class: 'st-head')
+	return tag('section', $h.tag('div', tag('table', tag('thead', $head).tag('tbody', $rows)), class: 'st-scroll'), class: 'sw-card st-card')
+}
+
+static nodeDetail($node){
+	$feed = fleet::cached($node) ?: ['label' => $node, 'ok' => false]
+	$label = $feed['label'] ?? $node
+	$ok = $feed['ok'] ?? false
+	$back = tag('a', static::icon('arrow', 15, 'muted').tag('span', 'Terug naar overzicht'), href: '/overview', class: 'err-back async')
+	$pill = tag('span', tag('span', void, class: 'sw-dot').tag('span', $ok ? 'online' : 'offline'), class: 'sw-pill '.($ok ? 'online' : 'offline'))
+	$sub = $ok ? (($feed['server'] ?? '?').' · build '.($feed['build'] ?? $feed['phlo'] ?? '?').' · Phlo '.($feed['phlo'] ?? '?')) : 'niet bereikbaar'
+	$titles = tag('div', tag('span', $label, class: 'kpi-name').tag('span', $sub, class: 'kpi-sub'), class: 'kpi-titles')
+	$head = tag('div', tag('div', static::icon('server', 22, 'blue').$titles, class: 'kpi-id').$pill, class: 'kpi-head')
+	if (!$ok) return tag('div', $back.tag('section', tag('div', $head, class: 'nd-card'), class: 'sw-card'), class: 'dash')
+	$m = (object)($feed['metrics'] ?? [])
+	$errTotal = 0
+	foreach (($feed['errors'] ?? []) AS $x) $errTotal += (int)($x['occurrences'] ?? 0)
+	$vis = (int)array_sum($feed['visitors'] ?? [])
+	$errStat = $errTotal ? tag('a', static::icon('alert', 14).tag('span', number_format($errTotal, 0, ',', '.').' errors'), href: '/errors/'.$node, class: 'kpi-stat bad link async') : tag('span', static::icon('check', 14, 'emerald').tag('span', 'geen errors'), class: 'kpi-stat good')
+	$stats = tag('div', static::kpiStat('server', count($feed['apps'] ?? []).' hosts').static::kpiStat('clock', age_human($m->uptime_sec ?? 0)).static::kpiStat('users', number_format($vis, 0, ',', '.').' bezoekers').$errStat, class: 'kpi-stats nd-stats')
+	$bars = tag('div', static::bar('CPU', static::loadPct($m), 'cpu', void, ($m->load1 ?? 0).' / '.($m->cpu_count ?? 0)).static::bar('Geheugen', static::pct($m->mem_used ?? 0, $m->mem_total ?? 0), 'activity', void, size_human($m->mem_used ?? 0).' / '.size_human($m->mem_total ?? 0)).static::bar('Opslag', static::pct($m->disk_used ?? 0, $m->disk_total ?? 0), 'harddrive', 'disk', size_human($m->disk_used ?? 0).' / '.size_human($m->disk_total ?? 0)), class: 'sw-bars')
+	$metricsCard = tag('section', tag('div', $head.$stats, class: 'nd-top').$bars, class: 'sw-card nd-card')
+	return tag('div', $back.$metricsCard.static::nodeWaPanel($node, $feed).static::nodeHostsTable($node, $feed), class: 'dash')
+}
+
+route both GET overview {
+	%app->active = 'overview'
+	$local = fleet::cached('local')
+	$polled = $local ? date('H:i:s', (int)($local['polled'] ?? $local['time'] ?? 0)) : '-'
+	$titleBlock = tag('div', tag('h1', static::icon('activity', 26, 'blue').tag('span', 'Fleet Dashboard', class: 'grad'), class: 'dash-title').tag('p', 'Real-time monitoring van alle servers', class: 'dash-sub'))
+	$update = tag('div', static::icon('refresh', 16, 'muted').tag('span', 'Laatste poll: '.tag('span', $polled, class: 'upd-time')), class: 'dash-update')
+	$head = tag('header', $titleBlock.$update, class: 'dash-head')
+	main(tag('div', $head.static::serversGrid().static::hostsPanel(), class: 'dash'), 'Overzicht')
+}
+
+route both GET errors $node $app= {
+	%app->active = 'overview'
+	if (!auth::user()?->canServer($node)) return main('Geen toegang tot deze server.', 'Geen toegang')
+	main(static::errorsView($node, $app), 'Errors')
+}
+
+route both GET node $node {
+	%app->active = 'overview'
+	if (!auth::user()?->canServer($node)) return main('Geen toegang tot deze server.', 'Geen toegang')
+	main(static::nodeDetail($node), 'Node · '.$node)
+}
+
+<script>
+on('input', 'input.flt', (el) => {
+	let q = el.value.toLowerCase()
+	objects('tr[data-filter]').forEach((row) => row.style.display = row.dataset.filter.indexOf(q) < 0 ? 'none' : '')
+})
+
+</script>
+
+<style>
+.ic {
+	display: inline-block
+	flex-shrink: 0
+	vertical-align: middle
+}
+.ic.blue: color: $primary
+.ic.emerald: color: $success
+.ic.muted: color: $muted
+.ic.error: color: $error
+.ic.lock: color: $muted
+.dash {
+	display: flex
+	flex-direction: column
+	gap: 1.5rem
+	margin: 0 auto
+	max-width: 1400px
+	padding: 1rem .25rem 2rem
+}
+.dash-head {
+	align-items: center
+	display: flex
+	flex-wrap: wrap
+	gap: 1rem
+	justify-content: space-between
+}
+.dash-title {
+	align-items: center
+	display: flex
+	font-size: 1.65rem
+	font-weight: 800
+	gap: .6rem
+	margin: 0
+}
+.dash-title .grad {
+	background: linear-gradient(90deg, $primary, $success)
+	-webkit-background-clip: text
+	background-clip: text
+	color: transparent
+}
+.dash-sub {
+	color: $muted
+	margin: .35rem 0 0
+}
+.dash-update {
+	align-items: center
+	background: $surface
+	border: 1px solid $border
+	border-radius: 10px
+	color: $muted
+	display: flex
+	font-size: .85rem
+	gap: .5rem
+	padding: .5rem .85rem
+}
+.upd-time {
+	color: $text
+	font-family: monospace
+}
+.kpi-grid {
+	display: grid
+	gap: 1.25rem
+	grid-template-columns: repeat(auto-fit, minmax(255px, 1fr))
+}
+.kpi-card {
+	background: $surface
+	border: 1px solid $border
+	border-radius: 12px
+	box-shadow: 0 6px 18px #0005
+	display: flex
+	flex-direction: column
+	gap: 1.1rem
+	padding: 1.25rem
+}
+.kpi-card.off: opacity: .6
+.kpi-head {
+	align-items: center
+	display: flex
+	gap: .5rem
+	justify-content: space-between
+}
+.kpi-id {
+	align-items: center
+	display: flex
+	gap: .6rem
+	min-width: 0
+}
+.kpi-titles {
+	display: flex
+	flex-direction: column
+	gap: .1rem
+	min-width: 0
+}
+.kpi-name {
+	color: $text
+	font-size: 1.15rem
+	font-weight: 700
+}
+.kpi-sub {
+	color: $muted
+	font-family: monospace
+	font-size: .75rem
+	overflow: hidden
+	text-overflow: ellipsis
+	white-space: nowrap
+}
+.kpi-stats {
+	display: flex
+	flex-wrap: nowrap
+	gap: .75rem
+	justify-content: space-between
+}
+.kpi-stat {
+	align-items: center
+	color: $muted
+	display: inline-flex
+	font-size: .82rem
+	gap: .35rem
+}
+.kpi-stat.bad: color: $error
+.kpi-stat.good: color: $success
+.kpi-stat.link {
+	cursor: pointer
+	text-decoration: none
+}
+.kpi-stat.link:hover: text-decoration: underline
+.sw-pill {
+	align-items: center
+	background: $bg
+	border: 1px solid $border
+	border-radius: 999px
+	display: inline-flex
+	flex-shrink: 0
+	font-size: .8rem
+	gap: .45rem
+	padding: .25rem .7rem
+	text-transform: capitalize
+}
+.sw-dot {
+	animation: dashpulse 2s ease-in-out infinite
+	border-radius: 50%
+	height: 8px
+	width: 8px
+}
+.sw-pill.online .sw-dot: background: $success
+.sw-pill.offline .sw-dot: background: $error
+@keyframes dashpulse {
+	0%, 100%: opacity: 1
+	50%: opacity: .35
+}
+.sw-bars {
+	display: flex
+	flex-direction: column
+	gap: 1rem
+	margin-top: auto
+}
+.pb-top {
+	align-items: center
+	color: $muted
+	display: flex
+	font-size: .85rem
+	justify-content: space-between
+	margin-bottom: .4rem
+}
+.pb-label {
+	align-items: center
+	display: flex
+	gap: .4rem
+}
+.pb-right {
+	align-items: baseline
+	display: flex
+	gap: .5rem
+}
+.pb-detail {
+	color: $muted
+	font-family: monospace
+	font-size: .78em
+}
+.pb-val {
+	color: $text
+	font-weight: 600
+}
+.pb-track {
+	background: color-mix(in srgb, $surface 75%, $text)
+	border-radius: 999px
+	height: 8px
+	overflow: hidden
+}
+.pb-fill {
+	background: $primary
+	border-radius: 999px
+	height: 100%
+	transition: width .5s ease-in-out
+}
+.pb.mid .pb-fill: background: $warn
+.pb.high .pb-fill: background: $error
+.pb.disk .pb-fill: background: #a855f7
+.sw-card {
+	background: $surface
+	border: 1px solid $border
+	border-radius: 12px
+	box-shadow: 0 10px 25px #0006
+	overflow: hidden
+}
+.st-head {
+	align-items: center
+	background: color-mix(in srgb, $surface 92%, $text)
+	border-bottom: 1px solid $border
+	display: flex
+	flex-wrap: wrap
+	gap: .75rem
+	justify-content: space-between
+	padding: 1.1rem 1.25rem
+}
+.st-title {
+	align-items: center
+	color: $text
+	display: flex
+	font-size: 1.2rem
+	font-weight: 700
+	gap: .5rem
+	margin: 0
+}
+.st-tools {
+	align-items: center
+	display: flex
+	flex-wrap: wrap
+	gap: .6rem
+}
+.st-badge {
+	background: color-mix(in srgb, $primary 20%, transparent)
+	border-radius: 999px
+	color: $primary
+	font-size: .72rem
+	font-weight: 600
+	padding: .2rem .6rem
+	white-space: nowrap
+}
+.flt {
+	background: $bg
+	border: 1px solid $border
+	border-radius: 8px
+	color: $text
+	font-size: .82rem
+	padding: .4rem .7rem
+}
+.flt:focus {
+	border-color: $primary
+	outline: none
+}
+.st-scroll {
+	overflow-x: auto
+}
+.st-card table {
+	border-collapse: collapse
+	width: 100%
+}
+.st-card th {
+	color: $muted
+	font-size: .72rem
+	font-weight: 500
+	letter-spacing: .05em
+	padding: .8rem 1rem
+	text-align: left
+	text-transform: uppercase
+	white-space: nowrap
+}
+.st-card th.c: text-align: center
+.st-card td {
+	border-top: 1px solid color-mix(in srgb, $border 60%, transparent)
+	padding: .7rem 1rem
+	vertical-align: middle
+}
+.st-card td.c: text-align: center
+.st-card tbody tr: transition: background .15s ease
+.st-card tbody tr:hover: background: color-mix(in srgb, $surface 88%, $text)
+.h-link {
+	align-items: center
+	color: $text
+	display: inline-flex
+	font-weight: 600
+	gap: .5rem
+	text-decoration: none
+	white-space: nowrap
+}
+.h-link:hover .h-host: color: $primary
+.h-server {
+	color: $muted
+	font-size: .85rem
+}
+.env-badge {
+	border-radius: 6px
+	font-size: .64rem
+	font-weight: 700
+	letter-spacing: .05em
+	padding: .15rem .45rem
+	text-transform: uppercase
+}
+.env-badge.prod {
+	background: color-mix(in srgb, $success 18%, transparent)
+	color: $success
+}
+.env-badge.stage {
+	background: color-mix(in srgb, $warn 18%, transparent)
+	color: $warn
+}
+.env-badge.dev {
+	background: color-mix(in srgb, $primary 20%, transparent)
+	color: $primary
+}
+.sc {
+	align-items: center
+	display: inline-flex
+	font-family: monospace
+	gap: .4rem
+	justify-content: center
+}
+.sc-code {
+	font-size: .85rem
+	font-weight: 600
+}
+.sc-code.up: color: $success
+.sc-code.auth: color: $primary
+.sc-code.warn: color: $warn
+.sc-code.down: color: $error
+.sc-ms {
+	color: $muted
+	font-size: .65rem
+}
+.st-dot {
+	border-radius: 50%
+	display: inline-block
+	flex-shrink: 0
+	height: 8px
+	width: 8px
+}
+.st-dot.up: background: $success
+.st-dot.auth: background: $primary
+.st-dot.warn: background: $warn
+.st-dot.down: background: $error
+.vis {
+	align-items: center
+	color: $muted
+	display: inline-flex
+	gap: .4rem
+	justify-content: center
+}
+.vis-num {
+	color: $text
+	font-family: monospace
+}
+.err-link {
+	cursor: pointer
+	text-decoration: none
+}
+.err-badge {
+	align-items: center
+	background: color-mix(in srgb, $error 20%, transparent)
+	border-radius: 999px
+	color: $error
+	display: inline-flex
+	font-weight: 700
+	gap: .3rem
+	padding: .15rem .6rem
+}
+.err-zero {
+	color: $muted
+	font-family: monospace
+	opacity: .5
+}
+.err-back {
+	align-items: center
+	color: $muted
+	cursor: pointer
+	display: inline-flex
+	gap: .4rem
+	text-decoration: none
+	width: fit-content
+}
+.err-back:hover: color: $primary
+.err-htitle {
+	display: flex
+	flex-direction: column
+	gap: .1rem
+}
+.err-file {
+	color: $primary
+	font-family: monospace
+	font-size: .8rem
+	white-space: nowrap
+}
+.err-path {
+	color: $muted
+	font-family: monospace
+	font-size: .8rem
+}
+.err-msg {
+	color: $text
+	font-family: inherit
+}
+.err-n {
+	color: $error
+	font-family: monospace
+	font-weight: 700
+}
+.err-when {
+	color: $muted
+	font-family: monospace
+	font-size: .75rem
+	white-space: nowrap
+}
+.err-empty {
+	align-items: center
+	color: $muted
+	display: flex
+	gap: .5rem
+	padding: 1.5rem
+}
+.mg-btn {
+	align-items: center
+	background: $bg
+	border: 1px solid $border
+	border-radius: 8px
+	color: $muted
+	cursor: pointer
+	display: inline-flex
+	font-size: .76rem
+	gap: .35rem
+	padding: .4rem .7rem
+	transition: border-color .15s ease, color .15s ease
+}
+.mg-btn:hover {
+	border-color: $error
+	color: $error
+}
+.g-row td {
+	background: color-mix(in srgb, $surface 78%, $primary)
+	border-top: 2px solid $border
+}
+.st-card tbody tr.g-row:hover td: background: color-mix(in srgb, $surface 78%, $primary)
+.g-name {
+	color: $text
+	font-size: .95rem
+	font-weight: 700
+}
+.g-count {
+	background: color-mix(in srgb, $primary 22%, transparent)
+	border-radius: 999px
+	color: $primary
+	font-size: .7rem
+	font-weight: 600
+	margin-left: .6rem
+	padding: .1rem .5rem
+}
+.g-vis, .g-err {
+	align-items: center
+	display: inline-flex
+	font-size: .75rem
+	gap: .25rem
+	margin-left: .6rem
+}
+.g-vis: color: $muted
+.g-err: color: $error
+.st-card .h-row td:first-child: padding-left: 2rem
+.h-alias {
+	background: color-mix(in srgb, $primary 18%, transparent)
+	border-radius: 999px
+	color: $primary
+	cursor: help
+	font-size: .7rem
+	font-weight: 600
+	margin-left: .5rem
+	padding: .05rem .4rem
+}
+.kpi-link {
+	color: inherit
+	display: flex
+	text-decoration: none
+}
+.kpi-link .kpi-card {
+	flex: 1
+	transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease
+}
+.kpi-link:hover .kpi-card {
+	border-color: $primary
+	box-shadow: 0 12px 30px #0007
+	transform: translateY(-3px)
+}
+.nd-card {
+	display: flex
+	flex-direction: column
+	gap: 1.25rem
+	padding: 1.25rem
+}
+.nd-top {
+	display: flex
+	flex-direction: column
+	gap: 1rem
+}
+.nd-stats {
+	flex-wrap: wrap
+	gap: 1.25rem
+	justify-content: flex-start
+}
+.wh-on {
+	align-items: center
+	color: $success
+	display: inline-flex
+	gap: .3rem
+}
+.wh-off {
+	align-items: center
+	color: $warn
+	display: inline-flex
+	gap: .3rem
+}
+</style>
