@@ -72,10 +72,17 @@ route async POST login {
 	$email = trim((string)(%payload->email ?? %payload->username ?? void))
 	$pass = trim((string)(%payload->password ?? void))
 	if (!$email || !$pass) return apply(inner: ['#loginError' => tag('span', 'Vul e-mailadres en wachtwoord in', class: 'login-err')])
-	if ($u = user::verify($email, $pass)){
-		%session->user = $u->id
-		%session->name = $u->displayName
-		return static::home()
+	if (phlo_exists('user')){
+		try {
+			if ($u = user::verify($email, $pass)){
+				%session->user = $u->id
+				%session->name = $u->displayName
+				return static::home()
+			}
+		}
+		catch (\Throwable $e){
+			$u = null
+		}
 	}
 	if (static::verifyIni($email, $pass)){
 		%session->user = 'root'
