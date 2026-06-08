@@ -16,6 +16,7 @@ method navMenu {
 	$u = auth::user()
 	if (!$u) return []
 	$full = [
+			'scanlog'  => ['icon' => '📸', 'uri' => 'scanlog', 'title' => 'Scanlog', 'admin' => false],
 		'overview' => ['icon' => '🏠', 'uri' => 'overview', 'title' => 'Overzicht', 'admin' => false],
 		'visitor'  => ['icon' => '👁️', 'uri' => 'visitors', 'title' => 'Bezoekers', 'admin' => true],
 		'domain'   => ['icon' => '🌍', 'uri' => 'domains',  'title' => 'Domeinen', 'admin' => true],

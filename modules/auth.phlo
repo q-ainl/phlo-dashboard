@@ -13,8 +13,29 @@ static verifyIni($user, $pass){
 	return $u !== void && $p !== void && hash_equals($u, (string)$user) && hash_equals($p, (string)$pass)
 }
 
+# Federatie (gegate op [fleet] master in creds): authenticeer een user tegen de centrale hub. Tekent
+# time.auth.user.module met het gedeelde fleet-secret; de master checkt wachtwoord + canServer + canModule($module).
+static fedAuth($user, $pass){
+	$cfg = %creds->fleet->master ?? null
+	if (!$cfg) return null
+	$url = (string)($cfg->url ?? void)
+	$secret = (string)($cfg->secret ?? void)
+	$module = (string)($cfg->module ?? void)
+	if ($url === void || $secret === void || $module === void) return null
+	$time = (string)time()
+	$headers = ['X-Fleet-Time: '.$time, 'X-Fleet-Sign: '.hash_hmac('sha256', $time.'.auth.'.$user.'.'.$module, $secret)]
+	try {
+		$res = json_decode((string)HTTP($url.'/api/auth', $headers, true, ['email' => $user, 'password' => $pass, 'module' => $module]), true)
+	}
+	catch (\Throwable $e){
+		return null
+	}
+	return ($res['ok'] ?? false) ? ($res['user'] ?? null) : null
+}
+
 static user {
-	%req->authUser ??= ((%session->user ?? null) === 'root') ? new authuser() : (phlo_exists('user') ? (user::authUser() ?: false) : false)
+	$sid = %session->user ?? null
+	%req->authUser ??= !$sid ? false : (($sid === 'root' || (%session->fed ?? null) || !phlo_exists('user')) ? new authuser(id: (string)$sid, name: (string)(%session->name ?? $sid)) : (user::authUser() ?: false))
 	return %req->authUser ?: null
 }
 
@@ -45,6 +66,11 @@ static themeCss {
 }
 
 static home {
+	# Node-lokale landing-module (constante via www/app.php, bv. `landing: 'scanlog'`); anders het CMS-dashboard.
+	if (defined('landing') && phlo_exists(landing)){
+		%app->active = landing
+		return view(phlo('CMS_layout').lf.tag('main', indentView(lf.phlo(landing)->page().lf)), path: void)
+	}
 	%app->active = 'dashboard'
 	return view(phlo('CMS_layout').lf.tag('main', indentView(lf.phlo('CMS_dashboard')->view.lf)), path: void)
 }
@@ -54,12 +80,14 @@ static check {
 	if (static::authed() && static::user()) return false
 	unset(%session->user)
 	unset(%session->name)
+	unset(%session->fed)
 	return view(phlo('auth')->loginPage, 'Inloggen', css: static::themeCss())
 }
 
 static logout {
 	unset(%session->user)
 	unset(%session->name)
+	unset(%session->fed)
 	return view(phlo('auth')->loginPage, 'Inloggen', css: static::themeCss())
 }
 
@@ -87,6 +115,12 @@ route async POST login {
 	if (static::verifyIni($email, $pass)){
 		%session->user = 'root'
 		%session->name = 'root'
+		return static::home()
+	}
+	if ($fed = static::fedAuth($email, $pass)){
+		%session->user = (string)($fed['id'] ?? $email)
+		%session->name = (string)($fed['name'] ?? $email)
+		%session->fed = 1
 		return static::home()
 	}
 	return apply(inner: ['#loginError' => tag('span', 'Onbekende combinatie van e-mailadres en wachtwoord', class: 'login-err')])
