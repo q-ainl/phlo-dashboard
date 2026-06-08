@@ -4,6 +4,12 @@
 .local/
 .agents/
 
+# Node-lokale config (elke node z'n eigen - kopieer van *.example)
+www/app.php
+data/app.json
+data/app.md
+data/app.headless.json
+
 # Secrets + runtime
 data/auth.ini
 data/creds.ini
