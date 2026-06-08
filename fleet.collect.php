@@ -56,6 +56,63 @@ function fleet_visitors($db): array {
 	}
 }
 
+# Geolocatie-verrijking van bezoekersrijen via de lokale lookup-cache + ipgeolocation.io (mist → API + cache).
+function fleet_geo_enrich(PDO $pdo, array $rows, string $ipgeoKey): array {
+	$ips = [];
+	foreach ($rows as $r) if (!empty($r['IP'])) $ips[$r['IP']] = true;
+	$ips = array_keys($ips);
+	if (!$ips) return $rows;
+	$geo = [];
+	$ph = implode(',', array_fill(0, count($ips), '?'));
+	$st = $pdo->prepare('SELECT ip, city, country, lat, lon, isp FROM lookup WHERE ip IN ('.$ph.')');
+	$st->execute($ips);
+	foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $g) $geo[$g['ip']] = $g;
+	if ($ipgeoKey !== '') foreach ($ips as $ip){
+		if (isset($geo[$ip]) || !filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) continue;
+		$res = @json_decode((string)@file_get_contents('https://api.ipgeolocation.io/ipgeo?apiKey='.$ipgeoKey.'&ip='.$ip));
+		if (!is_object($res) || !isset($res->country_code2)) continue;
+		$g = ['ip' => $ip, 'city' => (string)($res->city ?? ''), 'country' => (string)($res->country_code2 ?? ''), 'lat' => (string)($res->latitude ?? ''), 'lon' => (string)($res->longitude ?? ''), 'isp' => (string)($res->isp ?? '')];
+		try { $pdo->prepare('INSERT IGNORE INTO lookup (ip, city, country, lat, lon, isp) VALUES (?,?,?,?,?,?)')->execute([$g['ip'], $g['city'], $g['country'], $g['lat'], $g['lon'], $g['isp']]); } catch (\Throwable $e){}
+		$geo[$ip] = $g;
+	}
+	foreach ($rows as $i => $r){
+		$g = $geo[$r['IP'] ?? ''] ?? [];
+		$rows[$i]['city'] = $g['city'] ?? null;
+		$rows[$i]['country'] = $g['country'] ?? null;
+		$rows[$i]['isp'] = $g['isp'] ?? null;
+		$rows[$i]['lat'] = $g['lat'] ?? null;
+		$rows[$i]['lon'] = $g['lon'] ?? null;
+	}
+	return $rows;
+}
+
+# Volledig bezoekers-rapport (lijst + aggregaties) uit de lokale DB - geserveerd via GET /api/visitors,
+# zodat de master het over HTTP+HMAC ophaalt i.p.v. een remote MySQL-connect.
+function fleet_visitor_report(): array {
+	$ini = @parse_ini_file(fleet_base().'/dashboard/data/creds.ini', true, INI_SCANNER_RAW);
+	$db = is_array($ini) ? ($ini['mysql'] ?? null) : null;
+	$ipgeoKey = is_array($ini) ? (string)($ini['ipgeolocation'] ?? '') : '';
+	if (!is_array($db) || empty($db['host']) || empty($db['database'])) return [];
+	try {
+		$pdo = new PDO('mysql:host='.$db['host'].';dbname='.$db['database'].';charset=utf8mb4', (string)($db['user'] ?? ''), (string)($db['password'] ?? ''), [PDO::ATTR_TIMEOUT => 5, PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+		if (!$pdo->query("SHOW TABLES LIKE 'visitors'")->fetchColumn()) return [];
+	}
+	catch (\Throwable $e){ return []; }
+	$now = time();
+	$d30 = $now - 86400 * 30;
+	try {
+		$recent = fleet_geo_enrich($pdo, $pdo->query('SELECT * FROM visitors ORDER BY changed DESC LIMIT 200')->fetchAll(PDO::FETCH_ASSOC) ?: [], $ipgeoKey);
+		return [
+			'active' => (int)$pdo->query('SELECT COUNT(id) FROM visitors WHERE changed > '.($now - 300))->fetchColumn(),
+			'recent' => $recent,
+			'countries' => $pdo->query('SELECT COALESCE(l.country, "Onbekend") AS country, COUNT(v.id) AS count FROM visitors v LEFT JOIN lookup l ON v.IP = l.ip WHERE v.changed > '.$d30.' GROUP BY country ORDER BY count DESC LIMIT 5')->fetchAll(PDO::FETCH_ASSOC) ?: [],
+			'browsers' => $pdo->query('SELECT browser, COUNT(id) AS count FROM visitors WHERE changed > '.$d30.' GROUP BY browser ORDER BY count DESC LIMIT 5')->fetchAll(PDO::FETCH_ASSOC) ?: [],
+			'referrers' => $pdo->query('SELECT referrer, COUNT(id) AS count FROM visitors WHERE referrer IS NOT NULL AND changed > '.$d30.' GROUP BY referrer ORDER BY count DESC LIMIT 8')->fetchAll(PDO::FETCH_ASSOC) ?: [],
+		];
+	}
+	catch (\Throwable $e){ return []; }
+}
+
 function fleet_env(string $block): string {
 	if (str_contains($block, 'phlo_dev')) return 'dev';
 	if (str_contains($block, 'phlo_stage')) return 'stage';

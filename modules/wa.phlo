@@ -23,7 +23,7 @@ static status($port, $secret){
 	}
 }
 
-route POST wa $instance $action {
+route POST api wa $instance $action {
 	$inst = static::instances()[$instance] ?? null
 	if (!$inst) return error('Onbekende instance', 404)
 	if (!in_array($action, static::sendActions())) return error('Ongeldige actie', 400)
@@ -35,7 +35,7 @@ route POST wa $instance $action {
 	return %res->render()
 }
 
-route GET wa $instance $action {
+route GET api wa $instance $action {
 	$inst = static::instances()[$instance] ?? null
 	if (!$inst) return error('Onbekende instance', 404)
 	if (!in_array($action, static::readActions())) return error('Ongeldige actie', 400)

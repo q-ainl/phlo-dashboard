@@ -48,7 +48,7 @@ route both GET messages {
 	main($out, 'Meldingen')
 }
 
-route POST notify {
+route POST api notify {
 	%security->api
 	$secret = (string)($_SERVER['HTTP_SECRET'] ?? void)
 	$expect = (string)(%creds->notify->secret ?? void)

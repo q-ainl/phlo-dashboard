@@ -7,7 +7,7 @@ prop trans => %session->trans ?? 'cards'
 prop options = 'wss'
 prop version = '1.0.1'
 prop model = 'gpt-4o'
-prop publicPaths = ['wa', 'notify']
+prop publicPaths = ['api']
 
 prop models = ['visitor', 'domain', 'user', 'subscription']
 prop menu => $this->navMenu
@@ -34,20 +34,11 @@ method navMenu {
 	return $out
 }
 
-method useExternalDb {
-	if (!(%creds->external ?? null)) return
-	%creds->mysql->host = %creds->external->host
-	%creds->mysql->database = %creds->external->database
-	%creds->mysql->user = %creds->external->user
-	%creds->mysql->password = %creds->external->password
-}
-
 %security->strict
 $this->token
 if (auth::check()) return
 auth::authed() && auth::user()
 if (!auth::allows(%req->path)) return main('Geen toegang tot deze pagina.', 'Geen toegang')
-%req->path === void || str_starts_with(%req->path, 'visitor') ? $this->useExternalDb() : null
 if (app::route()) return
 if (%req->method !== 'GET') return apply(error: 'Invalid request')
 main('Page not found!')

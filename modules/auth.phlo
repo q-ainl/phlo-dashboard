@@ -1,4 +1,4 @@
-static publicPaths => array_merge(['login', 'logout', 'fleet'], (array)(%app->publicPaths ?? []))
+static publicPaths => array_merge(['login', 'logout'], (array)(%app->publicPaths ?? []))
 
 static authed => (bool)(%session->user ?? null)
 

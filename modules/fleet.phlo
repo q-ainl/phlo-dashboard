@@ -117,7 +117,7 @@ static manage($node, $command, $app = void){
 	$time = (string)time()
 	$headers = ['X-Fleet-Time: '.$time, 'X-Fleet-Sign: '.hash_hmac('sha256', $time.'.'.$command.'.'.(string)$app, $secret)]
 	try {
-		$res = json_decode((string)HTTP($url.'/fleet/manage', $headers, true, ['command' => $command, 'app' => (string)$app]), true)
+		$res = json_decode((string)HTTP($url.'/api/manage', $headers, true, ['command' => $command, 'app' => (string)$app]), true)
 		return is_array($res) ? $res : ['ok' => false, 'msg' => 'geen antwoord']
 	}
 	catch (\Throwable $e){
@@ -125,7 +125,7 @@ static manage($node, $command, $app = void){
 	}
 }
 
-route GET fleet feed {
+route GET api feed {
 	%security->api
 	%res->type = 'application/json'
 	if (!static::authPeer()){
@@ -136,7 +136,20 @@ route GET fleet feed {
 	return %res->render()
 }
 
-route POST fleet auth {
+route GET api visitors {
+	%security->api
+	%res->type = 'application/json'
+	if (!static::authPeer()){
+		%res->body = json_encode(['error' => 'unauthorized'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+		return %res->render(401)
+	}
+	defined('FLEET_COLLECT_LIB') || define('FLEET_COLLECT_LIB', 1)
+	require_once app.'fleet.collect.php'
+	%res->body = json_encode(fleet_visitor_report(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+	return %res->render()
+}
+
+route POST api auth {
 	%security->api
 	%res->type = 'application/json'
 	$email = trim((string)(%payload->email ?? void))
@@ -156,7 +169,7 @@ route POST fleet auth {
 	return %res->render()
 }
 
-route POST fleet manage {
+route POST api manage {
 	%security->api
 	%res->type = 'application/json'
 	$command = (string)(%payload->command ?? void)

@@ -2,17 +2,78 @@
 
 view: $this->IP
 
-static lookup($IP){
-	if (!$IP || !filter_var($IP, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) return null
-	if (!$record = %MySQL->record('lookup', ip: $IP)){
-		$res = json_decode(HTTP('https://api.ipgeolocation.io/ipgeo?apiKey='.%creds->ipgeolocation.'&ip='.$IP))
-		$record = obj(ip: $IP, city: $res->city, country: $res->country_code2, lat: $res->latitude, lon: $res->longitude, isp: $res->isp)
-		%MySQL->create('lookup', ...$record)
-	}
-	return $record
+# Bezoekersdata via de fleet-API (GET /api/visitors, HMAC): de eigen node (als localVisitors=1, direct
+# zonder self-HTTP) + de peers met visitors=1 in [fleet]. Per request gecachet, samengevoegd. Geen remote-MySQL.
+static report {
+	%req->visitorReport ??= static::fetchReport()
+	return %req->visitorReport
 }
 
-static objFilters => arr(real: arr(title: 'Echte bezoekers', filter: 'changed >= created AND changed - created > 33 AND host NOT LIKE "dev.%" AND IP NOT IN ("87.212.163.36", "217.122.154.229")'), me: arr(title: "Geen $_SERVER[REMOTE_ADDR]", filter: "ip!='$_SERVER[REMOTE_ADDR]'"))
+static fetchReport {
+	$merged = ['active' => 0, 'recent' => [], 'countries' => [], 'browsers' => [], 'referrers' => []]
+	if (%creds->localVisitors ?? null){
+		defined('FLEET_COLLECT_LIB') || define('FLEET_COLLECT_LIB', 1)
+		require_once app.'fleet.collect.php'
+		static::mergeReport($merged, fleet_visitor_report())
+	}
+	foreach ((fleet::peers() ?? []) AS $peer){
+		if (!($peer->visitors ?? null)) continue
+		$url = (string)($peer->url ?? void)
+		$secret = (string)($peer->secret ?? void)
+		if ($url === void || $secret === void) continue
+		$time = (string)time()
+		$headers = ['X-Fleet-Time: '.$time, 'X-Fleet-Sign: '.hash_hmac('sha256', $time, $secret)]
+		try {
+			static::mergeReport($merged, json_decode((string)HTTP($url.'/api/visitors', $headers), true))
+		}
+		catch (\Throwable $e){
+			continue
+		}
+	}
+	usort($merged['recent'], fn($a, $b) => ((int)($b['changed'] ?? 0)) <=> ((int)($a['changed'] ?? 0)))
+	$merged['recent'] = array_slice($merged['recent'], 0, 200)
+	return $merged
+}
+
+static mergeReport(&$merged, $r){
+	if (!is_array($r)) return
+	$merged['active'] += (int)($r['active'] ?? 0)
+	$merged['recent'] = array_merge($merged['recent'], (array)($r['recent'] ?? []))
+	foreach (['countries' => 'country', 'browsers' => 'browser', 'referrers' => 'referrer'] AS $agg => $key){
+		foreach ((array)($r[$agg] ?? []) AS $row){
+			$k = (string)($row[$key] ?? '')
+			$merged[$agg][$k] = ($merged[$agg][$k] ?? 0) + (int)($row['count'] ?? 0)
+		}
+	}
+}
+
+static topPairs($keyed, $n){
+	arsort($keyed)
+	return array_slice($keyed, 0, $n, true)
+}
+
+static rowObject($row){
+	$v = new static
+	foreach ((array)$row AS $k => $val) $v->$k = $val
+	return $v
+}
+
+static records(...$args){
+	$rows = static::report()['recent'] ?? []
+	$limit = (int)($args['limit'] ?? 0)
+	if ($limit > 0) $rows = array_slice($rows, (int)($args['offset'] ?? 0), $limit)
+	$out = []
+	foreach ($rows AS $i => $row) $out[$row['id'] ?? $i] = static::rowObject($row)
+	return $out
+}
+
+static recordCount(...$args) => count(static::report()['recent'] ?? [])
+
+static record(...$args){
+	$id = (string)($args['id'] ?? void)
+	foreach (static::report()['recent'] ?? [] AS $row) if ((string)($row['id'] ?? '') === $id) return static::rowObject($row)
+	return null
+}
 
 static titleList = 'Bezoekers'
 static titleRecord = 'Bezoeker'
@@ -35,66 +96,35 @@ prop client {
 	$os = str_starts_with((string)$this->os, 'Windows') ? 'Windows' : $this->os
 	return static::deviceIcon($this->device).space.$this->browser.($os ? ' ('.$os.')' : void)
 }
-prop location => !$this->IP ? tag('span', 'untracked', class: 'untracked', title: 'Geen cookie-consent') : (($loc = visitor::lookup($this->IP)) ? tag('a', static::flag($loc->country).space.($loc->city && $loc->country ? "$loc->city, $loc->country" : ($loc->country ?? dash)), href: "https://www.google.com/maps/@$loc->lat,$loc->lon,14z", target: 'map') : dash)
+prop location => !$this->IP ? tag('span', 'untracked', class: 'untracked', title: 'Geen cookie-consent') : ($this->country ? tag('a', static::flag($this->country).space.($this->city && $this->country ? "$this->city, $this->country" : ($this->country ?? dash)), href: "https://www.google.com/maps/@$this->lat,$this->lon,14z", target: 'map') : dash)
 
 static objWidgets {
-	$missingIPs = static::column(
-		table: 'visitors v',
-		columns: 'DISTINCT v.IP',
-		where: 'v.IP IS NOT NULL AND v.IP != "" AND v.changed > '.(time() - (86400 * 30)).' AND NOT EXISTS (SELECT 1 FROM lookup l WHERE l.ip = v.IP)',
-	)
-	foreach ($missingIPs AS $ip) static::lookup($ip)
+	$rep = static::report()
 	return [
 		'Actieve Bezoekers' => obj (
 			order: 1,
 			type: 'gauge',
-			data: static::item(columns: 'COUNT(id)', where: 'changed > '.(time() - 300)),
+			data: (int)($rep['active'] ?? 0),
 		),
 		'Laatste 5 Bezoekers' => obj (
 			order: 4,
 			type: 'list',
-			data: loop(static::records(
-				table: 'visitors v',
-				columns: 'v.*, l.city, l.country',
-				joins: 'LEFT JOIN lookup l ON v.IP = l.ip',
-				order: 'v.changed DESC',
-				limit: 5,
-			), fn($visitor, $id) => tag('a', tag('b', $visitor->host).space.strtoupper($visitor->lang).space.$visitor->city.space.$visitor->browser.space.$visitor->os, href: "/visitor/$id", class: 'async')." - ".tag('span', void, data_ts: $visitor->changed)),
+			data: loop(array_slice($rep['recent'] ?? [], 0, 5), fn($v) => tag('a', tag('b', (string)($v['host'] ?? '')).space.strtoupper((string)($v['lang'] ?? '')).space.((string)($v['city'] ?? '')).space.((string)($v['browser'] ?? '')).space.((string)($v['os'] ?? '')), href: '/visitor/'.($v['id'] ?? ''), class: 'async')." - ".tag('span', void, data_ts: (int)($v['changed'] ?? 0))),
 		),
 		'Top 5 Landen (30d)' => obj (
 			order: 9,
 			type: 'pie',
-			data: static::pair (
-				table: 'visitors v',
-				columns: 'COALESCE(l.country, "Onbekend") AS country, COUNT(v.id) AS count',
-				joins: 'LEFT JOIN lookup l ON v.IP = l.ip',
-				where: 'v.changed > '.(time() - (86400 * 30)),
-				group: 'country',
-				order: 'count DESC',
-				limit: 5,
-			),
+			data: static::topPairs($rep['countries'] ?? [], 5),
 		),
 		'Top 5 Browsers (30d)' => obj (
 			order: 10,
 			type: 'pie',
-			data: static::pair (
-				columns: 'browser, COUNT(id) AS count',
-				where: 'changed > '.(time() - (86400 * 30)),
-				group: 'browser',
-				order: 'count DESC',
-				limit: 5,
-			),
+			data: static::topPairs($rep['browsers'] ?? [], 5),
 		),
 		'Top 8 Referrers (30d)' => obj (
 			order: 11,
 			type: 'list',
-			data: loop(static::pair (
-				columns: 'referrer, COUNT(id) AS count',
-				where: 'referrer IS NOT NULL AND changed > '.(time() - (86400 * 30)),
-				group: 'referrer',
-				order: 'count DESC',
-				limit: 8,
-			), fn($count, $ref) => tag('b', $count.'x').space.tag('a', href: $ref, target: '_blank', inner: preg_replace('/^https?:\/\/(www\.)?/', '', $ref))),
+			data: loop(static::topPairs($rep['referrers'] ?? [], 8), fn($count, $ref) => tag('b', $count.'x').space.tag('a', href: $ref, target: '_blank', inner: preg_replace('/^https?:\/\/(www\.)?/', '', (string)$ref))),
 		),
 	]
 }
@@ -164,7 +194,7 @@ static schema => arr (
 	isp: field (
 		type: 'virtual',
 		title: 'Provider',
-		label: fn($r) => visitor::lookup($r->IP)?->isp ?? dash,
+		label: fn($r) => $r->isp ?? dash,
 	),
 	IP: field (
 		type: 'text',
@@ -229,14 +259,14 @@ static schema => arr (
 	country: field (
 		type: 'virtual',
 		title: 'Land',
-		label: fn($r) => visitor::lookup($r->IP)?->country ?? dash,
+		label: fn($r) => $r->country ?? dash,
 		list: false,
 		record: false,
 	),
 	city: field (
 		type: 'virtual',
 		title: 'Stad',
-		label: fn($r) => visitor::lookup($r->IP)?->city ?? dash,
+		label: fn($r) => $r->city ?? dash,
 		list: false,
 		record: false,
 	),
