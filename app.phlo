@@ -1,6 +1,6 @@
 prop lang => 'nl'
 prop token => %cookies->token ??= token(20)
-prop title = 'Q-dev Dashboard'
+prop title = 'Phlo Dashboard'
 prop themeColor = 'black'
 prop theme => %session->theme ?? 'cobalt'
 prop trans => %session->trans ?? 'cards'
