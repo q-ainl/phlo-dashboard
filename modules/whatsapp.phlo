@@ -25,7 +25,7 @@ method grid {
 			}
 			elseif ($inst['qr'] ?? null) $meta .= tag('div', overview::icon('refresh', 13, 'warn').tag('span', 'scan QR om te koppelen'), class: 'wa-meta')
 			$host = $node === 'local' ? %req->host : (parse_url((string)(fleet::peers()?->$node?->url ?? void), PHP_URL_HOST) ?: $node)
-			$send = tag('div', tag('code', $host.'/wa/'.$inst['instance']), class: 'wa-url', title: 'Stuur-endpoint (POST + secret)')
+			$send = tag('div', tag('code', $host.'/api/wa/'.$inst['instance']), class: 'wa-url', title: 'Stuur-endpoint (POST + secret)')
 			$cards .= tag('div', $head.$badge.$meta.$send, class: 'wa-card'.($ready ? ' on' : ''))
 		}
 		$head = tag('h2', overview::icon('server', 18, 'blue').tag('span', $feed['label'] ?? $node), class: 'wa-server')

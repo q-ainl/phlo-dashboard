@@ -34,14 +34,22 @@ method navMenu {
 	return $out
 }
 
-%security->strict
-$this->token
-if (auth::check()) return
-auth::authed() && auth::user()
-if (!auth::allows(%req->path)) return main('Geen toegang tot deze pagina.', 'Geen toegang')
+# Adaptief: full-mode (auth-module geladen) doet security/auth-gate/CMS; headless doet enkel routing → JSON-404.
+if (class_exists('auth')){
+	%security->strict
+	$this->token
+	if (auth::check()) return
+	auth::authed() && auth::user()
+	if (!auth::allows(%req->path)) return main('Geen toegang tot deze pagina.', 'Geen toegang')
+}
 if (app::route()) return
-if (%req->method !== 'GET') return apply(error: 'Invalid request')
-main('Page not found!')
+if (class_exists('auth')){
+	if (%req->method !== 'GET') return apply(error: 'Invalid request')
+	return main('Page not found!')
+}
+%res->type = 'application/json'
+%res->body = json_encode(['error' => 'not found'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+return %res->render(404)
 
 view head: %CSRF
 
