@@ -9,7 +9,7 @@ prop version = '1.0.1'
 prop model = 'gpt-4o'
 prop publicPaths = ['api']
 
-prop models = ['visitor', 'domain', 'user', 'subscription']
+prop models => array_values(array_filter(['visitor', 'domain', 'user', 'subscription'], fn($m) => phlo_exists($m)))
 prop menu => $this->navMenu
 
 method navMenu {
@@ -27,6 +27,7 @@ method navMenu {
 	]
 	$out = []
 	foreach ($full AS $key => $item){
+			if (!phlo_exists($key)) continue
 		if (($item['admin'] ?? false) && !$u->isAdmin) continue
 		if (!$u->canModule($key)) continue
 		$out[$key] = $item
@@ -35,7 +36,7 @@ method navMenu {
 }
 
 # Adaptief: full-mode (auth-module geladen) doet security/auth-gate/CMS; headless doet enkel routing → JSON-404.
-if (class_exists('auth')){
+if (phlo_exists('auth')){
 	%security->strict
 	$this->token
 	if (auth::check()) return
@@ -43,7 +44,7 @@ if (class_exists('auth')){
 	if (!auth::allows(%req->path)) return main('Geen toegang tot deze pagina.', 'Geen toegang')
 }
 if (app::route()) return
-if (class_exists('auth')){
+if (phlo_exists('auth')){
 	if (%req->method !== 'GET') return apply(error: 'Invalid request')
 	return main('Page not found!')
 }

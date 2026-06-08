@@ -1,6 +1,7 @@
 {
     "resources": [
         "active",
+        "phlo.exists",
         "age.human",
         "create",
         "HTTP",
