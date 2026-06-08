@@ -42,6 +42,7 @@ if (phlo_exists('auth')){
 	$this->token
 	if (auth::check()) return
 	auth::authed() && auth::user()
+	if (trim((string)%req->path, '/') === '') return auth::home()
 	if (!auth::allows(%req->path)) return main('Geen toegang tot deze pagina.', 'Geen toegang')
 }
 if (app::route()) return
