@@ -68,8 +68,9 @@ static themeCss {
 static home {
 	# Node-lokale landing-module (constante via www/app.php, bv. `landing: 'scanlog'`); anders het CMS-dashboard.
 	if (defined('landing') && phlo_exists(landing)){
-		%app->active = landing
-		return view(phlo('CMS_layout').lf.tag('main', indentView(lf.phlo(landing)->page().lf)), path: void)
+		$mod = landing
+		%app->active = $mod
+		return view(phlo('CMS_layout').lf.tag('main', indentView(lf.$mod::page().lf)), path: void)
 	}
 	%app->active = 'dashboard'
 	return view(phlo('CMS_layout').lf.tag('main', indentView(lf.phlo('CMS_dashboard')->view.lf)), path: void)
