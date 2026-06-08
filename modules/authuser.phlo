@@ -1,0 +1,13 @@
+# Minimale auth-user-representatie voor de [site]/root-login (geen DB-model).
+# Hierdoor is de 'user'-module (DB-multi-user + /users-beheer-UI) optioneel: een leaf-node
+# laadt enkel deze class voor auth, zonder Gebruikers-nav/route. Full nodes laden óók 'user'.
+prop id = 'root'
+prop name = 'root'
+prop email = 'root'
+prop role = 'admin'
+prop active = 1
+prop isAdmin => $this->role === 'admin'
+prop displayName => $this->name
+
+method canServer($node) => $this->role === 'admin'
+method canModule($module) => $this->role === 'admin'

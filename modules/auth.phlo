@@ -14,7 +14,7 @@ static verifyIni($user, $pass){
 }
 
 static user {
-	%req->authUser ??= ((%session->user ?? null) === 'root') ? new user(id: 'root', name: 'root', email: 'root', role: 'admin', active: 1) : (user::authUser() ?: false)
+	%req->authUser ??= ((%session->user ?? null) === 'root') ? new authuser() : (phlo_exists('user') ? (user::authUser() ?: false) : false)
 	return %req->authUser ?: null
 }
 
