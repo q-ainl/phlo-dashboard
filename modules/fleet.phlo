@@ -392,7 +392,7 @@ static visitorReport {
 			'active' => (int)$pdo->query('SELECT COUNT(id) FROM visitors WHERE changed > '.($now - 300))->fetchColumn(),
 			'recent' => $recent,
 			'countries' => $pdo->query('SELECT COALESCE(l.country, "Onbekend") AS country, COUNT(v.id) AS count FROM visitors v LEFT JOIN lookup l ON v.IP = l.ip WHERE v.changed > '.$d30.' GROUP BY country ORDER BY count DESC LIMIT 5')->fetchAll(\PDO::FETCH_ASSOC) ?: [],
-			'browsers' => $pdo->query('SELECT browser, COUNT(id) AS count FROM visitors WHERE changed > '.$d30.' GROUP BY browser ORDER BY count DESC LIMIT 5')->fetchAll(\PDO::FETCH_ASSOC) ?: [],
+			'browsers' => $pdo->query('SELECT browser, COUNT(id) AS count FROM visitors WHERE IP IS NOT NULL AND changed > '.$d30.' GROUP BY browser ORDER BY count DESC LIMIT 5')->fetchAll(\PDO::FETCH_ASSOC) ?: [],
 			'referrers' => $pdo->query('SELECT referrer, COUNT(id) AS count FROM visitors WHERE referrer IS NOT NULL AND changed > '.$d30.' GROUP BY referrer ORDER BY count DESC LIMIT 8')->fetchAll(\PDO::FETCH_ASSOC) ?: [],
 		]
 	}

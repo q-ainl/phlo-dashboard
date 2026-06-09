@@ -8,7 +8,7 @@ phlo_app (
 	auth: false,
 	build: false,                    # dev: true, prod: false
 	debug: false,                    # dev: true, prod: false
-	dashboard: 'phlo',
+	# control: 'phlo',               # /phlo Control tool; dev/build default is 'phlo', so this line may be omitted
 	app: '/srv/control/dashboard/',  # pad per node aanpassen (sommige nodes wijken af)
 	websocket: 3001,
 	files: '/srv/control/files/',

@@ -96,6 +96,14 @@ prop client {
 }
 prop location => !$this->IP ? tag('span', 'untracked', class: 'untracked', title: 'Geen cookie-consent') : ($this->country ? tag('a', static::flag($this->country).space.($this->city && $this->country ? "$this->city, $this->country" : ($this->country ?? dash)), href: "https://www.google.com/maps/@$this->lat,$this->lon,14z", target: 'map') : dash)
 
+# Compact label for the recent-visitors widget; untracked visitors (no consent → no IP) show as
+# 'untracked' instead of their anonymous browser hash / empty city/os fields.
+static recentLabel($v){
+	$head = tag('b', (string)($v['host'] ?? '')).space.strtoupper((string)($v['lang'] ?? ''))
+	if (empty($v['IP'])) return $head.space.tag('span', 'untracked', class: 'untracked')
+	return $head.space.trim(((string)($v['city'] ?? '')).space.((string)($v['browser'] ?? '')).space.((string)($v['os'] ?? '')))
+}
+
 static objWidgets {
 	$rep = static::report()
 	return [
@@ -107,7 +115,7 @@ static objWidgets {
 		'Laatste 5 Bezoekers' => obj (
 			order: 4,
 			type: 'list',
-			data: loop(array_slice($rep['recent'] ?? [], 0, 5), fn($v) => tag('a', tag('b', (string)($v['host'] ?? '')).space.strtoupper((string)($v['lang'] ?? '')).space.((string)($v['city'] ?? '')).space.((string)($v['browser'] ?? '')).space.((string)($v['os'] ?? '')), href: '/visitor/'.($v['id'] ?? ''), class: 'async')." - ".tag('span', void, data_ts: (int)($v['changed'] ?? 0))),
+			data: loop(array_slice($rep['recent'] ?? [], 0, 5), fn($v) => tag('a', static::recentLabel($v), href: '/visitor/'.($v['id'] ?? ''), class: 'async')." - ".tag('span', void, data_ts: (int)($v['changed'] ?? 0))),
 		),
 		'Top 5 Landen (30d)' => obj (
 			order: 9,
