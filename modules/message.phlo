@@ -8,6 +8,8 @@ static order = 'created DESC'
 
 static levelCls($level) => ['error' => 'error', 'warn' => 'warn', 'order' => 'emerald', 'payment' => 'emerald', 'user' => 'blue'][(string)$level] ?? 'muted'
 
+static emoji($type) => ['user' => '🧍', 'payment' => '🪙', 'order' => '🛒', 'error' => '⚠️', 'warn' => '⚠️', 'info' => '🔔'][(string)$type] ?? '🔔'
+
 static feed($limit = 100){
 	$u = auth::user()
 	if (!$u) return []
@@ -62,11 +64,12 @@ route POST api notify {
 		title: substr(trim((string)($p->title ?? '')), 0, 255),
 		body: trim((string)($p->body ?? '')),
 		server: substr(trim((string)($p->server ?? 'local')), 0, 40),
+		host: substr(trim((string)($p->host ?? '')), 0, 100),
 		user_id: trim((string)($p->user ?? '')) ?: null,
 		read_at: null,
 		created: time(),
 	)
-	class_exists('subscription') && subscription::dispatch($m)
+	phlo_exists('subscription') && subscription::dispatch($m)
 	%res->type = 'application/json'
 	%res->body = json_encode(['ok' => true, 'id' => $m->id], JSON_UNESCAPED_SLASHES)
 	return %res->render()
@@ -80,6 +83,7 @@ static schema => arr (
 	title: field (type: 'text', title: 'Titel', length: 255, search: true),
 	body: field (type: 'text', title: 'Inhoud', length: 65000, list: false),
 	server: field (type: 'text', title: 'Server', length: 40),
+	host: field (type: 'text', title: 'Host', length: 100, list: false),
 	user_id: field (type: 'text', title: 'Gebruiker', length: 10, list: false),
 	read_at: field (type: 'number', title: 'Gelezen', list: false),
 	created: field (type: 'datetime', title: 'Tijd'),

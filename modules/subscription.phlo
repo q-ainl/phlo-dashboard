@@ -1,4 +1,5 @@
 @ extends: model
+@ requires: HTTP
 @ summary: Abonnementen - een user abonneert op (server, event) en krijgt nieuwe meldingen proactief geleverd (dashboard-inbox is altijd al gescoped; whatsapp = proactieve push). dispatch() draait bij elke nieuwe melding.
 
 view: $this->label
@@ -29,9 +30,14 @@ static sendWhatsapp($chatId, $message){
 	$url = (string)($c->url ?? void)
 	$secret = (string)($c->secret ?? void)
 	if ($url === void || $secret === void) return
-	$text = '*'.strtoupper((string)$message->level).' · '.$message->server.'*'.lf.(string)$message->title.(trim((string)$message->body) !== '' ? lf.(string)$message->body : void)
-	$ctx = stream_context_create(['http' => ['method' => 'POST', 'header' => "Content-Type: application/json\r\nsecret: ".$secret, 'content' => json_encode(['to' => $chatId, 'text' => $text], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), 'timeout' => 10, 'ignore_errors' => true]])
-	@file_get_contents(rtrim($url, '/').'/text', false, $ctx)
+	$emoji = message::emoji((string)$message->type)
+	$src = fleet::label((string)$message->server).(trim((string)$message->host) !== '' ? ' / '.$message->host : void)
+	$body = trim((string)$message->body)
+	$text = '*'.(string)$message->title.' '.$emoji.'*'.($body !== '' ? lf.$body : void).lf.$src
+	try {
+		HTTP(rtrim($url, '/').'/text', ['secret: '.$secret], true, ['to' => $chatId, 'text' => $text])
+	}
+	catch (\Throwable $e){}
 }
 
 static schema => arr (
