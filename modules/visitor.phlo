@@ -12,9 +12,7 @@ static report {
 static fetchReport {
 	$merged = ['active' => 0, 'recent' => [], 'countries' => [], 'browsers' => [], 'referrers' => []]
 	if (%creds->localVisitors ?? null){
-		defined('FLEET_COLLECT_LIB') || define('FLEET_COLLECT_LIB', 1)
-		require_once app.'fleet.collect.php'
-		static::mergeReport($merged, fleet_visitor_report())
+		static::mergeReport($merged, fleet::visitorReport())
 	}
 	foreach ((fleet::peers() ?? []) AS $peer){
 		if (!($peer->visitors ?? null)) continue

@@ -14,10 +14,371 @@ static authPeer {
 	return false
 }
 
-static feedData {
-	defined('FLEET_COLLECT_LIB') || define('FLEET_COLLECT_LIB', 1)
-	require_once app.'fleet.collect.php'
-	return fleet_collect()
+static feedData => static::collect()
+
+# Control-base (de map die dit dashboard bevat): /srv/control resp. /files/Server/control - afgeleid van app.
+static base => dirname(rtrim(app, '/'))
+
+static env($block){
+	if (str_contains($block, 'phlo_dev')) return 'dev'
+	if (str_contains($block, 'phlo_stage')) return 'stage'
+	return 'prod'
+}
+
+# Apps + hosts uit de Caddy-sites: per blok primaire host (kortste non-www) + aliassen + env.
+static caddyApps {
+	$apps = []
+	$skip = ['us', 'control', 'whatsapp']
+	foreach (glob(static::base().'/sites/*.caddy') AS $file){
+		$appName = basename($file, '.caddy')
+		if (in_array($appName, $skip, true)) continue
+		$blocks = []
+		$hosts = null
+		$buf = ''
+		foreach (explode(lf, (string)@file_get_contents($file)) AS $line){
+			if (preg_match('/^([a-z0-9*][^{(\n]*?)\s*\{/', $line, $m)){
+				if ($hosts !== null) $blocks[] = ['hosts' => $hosts, 'block' => $buf]
+				$hosts = trim($m[1])
+				$buf = $line.lf
+			}
+			elseif ($hosts !== null){
+				$buf .= $line.lf
+			}
+		}
+		if ($hosts !== null) $blocks[] = ['hosts' => $hosts, 'block' => $buf]
+		foreach ($blocks AS $b){
+			$env = static::env($b['block'])
+			$hostnames = []
+			foreach (explode(',', $b['hosts']) AS $host){
+				$host = trim($host)
+				if ($host === '' || !str_contains($host, '.')) continue
+				$hostnames[] = $host
+			}
+			if (!$hostnames) continue
+			$nonWww = array_values(array_filter($hostnames, fn($h) => !str_starts_with($h, 'www.')))
+			$candidates = $nonWww ?: $hostnames
+			usort($candidates, fn($a, $c) => strlen($a) <=> strlen($c) ?: strcmp($a, $c))
+			$primary = $candidates[0]
+			$he = str_starts_with($primary, 'dev.') ? 'dev' : (str_starts_with($primary, 'stage.') ? 'stage' : $env)
+			$aliases = array_values(array_filter($hostnames, fn($h) => $h !== $primary))
+			$apps[] = ['host' => $primary, 'aliases' => $aliases, 'env' => $he, 'app' => $appName]
+		}
+	}
+	return $apps
+}
+
+# Bezoekers-tellingen per host uit een (mogelijk externe) DB-config.
+static visitors($db){
+	if (!is_array($db) || empty($db['host']) || empty($db['database'])) return []
+	try {
+		$pdo = new \PDO('mysql:host='.$db['host'].';dbname='.$db['database'], (string)($db['user'] ?? ''), (string)($db['password'] ?? ''), [\PDO::ATTR_TIMEOUT => 3, \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION])
+		return array_map('intval', $pdo->query('SELECT host, COUNT(DISTINCT token) c FROM visitors GROUP BY host')->fetchAll(\PDO::FETCH_KEY_PAIR))
+	}
+	catch (\Throwable $e){
+		return []
+	}
+}
+
+# Status van de lokale phloWA-instances (config/wa*.js) via HTTP-health (+ qr indien niet ready).
+static whatsapp {
+	$list = []
+	foreach (glob(static::base().'/config/wa*.js') ?: [] AS $f){
+		if (!preg_match("/\\(\\s*'([a-z0-9]+)'\\s*,\\s*(\\d+)\\s*,\\s*'([^']+)'/", (string)@file_get_contents($f), $m)) continue
+		$port = (int)$m[2]
+		$res = null
+		try {
+			$res = json_decode((string)HTTP('http://127.0.0.1:'.$port.'/health', ['secret: '.$m[3]]), true)
+		}
+		catch (\Throwable $e){}
+		$entry = ['instance' => $m[1], 'port' => $port, 'status' => is_array($res) ? (string)($res['status'] ?? 'onbekend') : 'offline']
+		if (is_array($res)){
+			$entry['uptime'] = (int)($res['uptime'] ?? 0)
+			$entry['webhook'] = (bool)($res['webhook'] ?? false)
+			if (((string)($res['status'] ?? '')) !== 'ready'){
+				$qr = null
+				try {
+					$qr = json_decode((string)HTTP('http://127.0.0.1:'.$port.'/qr', ['secret: '.$m[3]]), true)
+				}
+				catch (\Throwable $e){}
+				if (is_array($qr) && !empty($qr['qr'])) $entry['qr'] = (string)$qr['qr']
+			}
+		}
+		$list[] = $entry
+	}
+	return $list
+}
+
+# Volledige node-snapshot: apps, errors, systeem-metrics, bezoekers, whatsapp. Geserveerd via /api/feed.
+static collect {
+	$apps = static::caddyApps()
+	$errors = []
+	foreach (glob(dirname(static::base()).'/*/data/errors.json') AS $file){
+		$data = json_decode((string)@file_get_contents($file), true)
+		if (!is_array($data) || !$data) continue
+		$occ = 0
+		$latest = ''
+		foreach ($data AS $e){
+			$occ += (int)($e['count'] ?? 1)
+			$lo = (string)($e['lastOccurred'] ?? '')
+			if ($lo > $latest) $latest = $lo
+		}
+		$errors[basename(dirname(dirname($file)))] = ['unique' => count($data), 'occurrences' => $occ, 'latest' => $latest, 'entries' => array_slice($data, 0, 100, true)]
+	}
+	$mem = ['MemTotal' => 0, 'MemAvailable' => 0]
+	foreach (explode(lf, (string)@file_get_contents('/proc/meminfo')) AS $line){
+		if (preg_match('/^(MemTotal|MemAvailable):\s+(\d+)/', $line, $mm)) $mem[$mm[1]] = (int)$mm[2] * 1024
+	}
+	$load = function_exists('sys_getloadavg') ? sys_getloadavg() : [0, 0, 0]
+	$cpu = max(1, substr_count((string)@file_get_contents('/proc/cpuinfo'), 'processor'))
+	$diskTotal = (int)@disk_total_space('/')
+	$diskFree = (int)@disk_free_space('/')
+	$uptime = (int)(float)strtok((string)@file_get_contents('/proc/uptime'), ' ')
+	$version = '?'
+	if (preg_match("/const phlo\\s*=\\s*'([^']+)'/", (string)@file_get_contents(static::base().'/phlo/phlo.php'), $vm)) $version = $vm[1]
+	$engineFiles = glob(static::base().'/phlo/*.php') ?: [static::base().'/phlo/phlo.php']
+	$buildTs = 0
+	foreach ($engineFiles AS $ef) $buildTs = max($buildTs, (int)@filemtime($ef))
+	$build = $buildTs ? date('Y-m-d H:i', $buildTs) : '?'
+	$ini = @parse_ini_file(static::base().'/dashboard/data/creds.ini', true, INI_SCANNER_RAW)
+	$visitors = static::visitors(is_array($ini) ? ($ini['mysql'] ?? null) : null)
+	return [
+		'server' => gethostname(),
+		'phlo' => $version,
+		'build' => $build,
+		'time' => time(),
+		'visitors' => $visitors,
+		'metrics' => [
+			'cpu_count' => $cpu,
+			'load1' => round($load[0] ?? 0, 2),
+			'mem_total' => $mem['MemTotal'],
+			'mem_used' => max(0, $mem['MemTotal'] - $mem['MemAvailable']),
+			'disk_total' => $diskTotal,
+			'disk_used' => max(0, $diskTotal - $diskFree),
+			'uptime_sec' => $uptime,
+		],
+		'apps' => $apps,
+		'errors' => $errors,
+		'whatsapp' => static::whatsapp(),
+	]
+}
+
+# --- Poller (CLI-command `php app.php fleet::poll`, draait als frankenphp via /etc/cron.d/fleet-poll) ---
+# Verzamelt elke node in de dashboard-cache (data/fleet/<node>.json). Het web (frankenphp) leest enkel die
+# cache en blokkeert dus nooit op een trage/dode node. Vervangt het oude rauwe bin/fleet-poll.php.
+
+# Parallelle bereikbaarheids-check van alle hosts tegelijk. curl_multi i.p.v. HTTP() omdat HTTP() één
+# request per keer doet en ~36 hosts sequentieel niet binnen de 2-min poll-cyclus passen.
+static ping($hosts, $local = false){
+	$hosts = array_values(array_unique($hosts))
+	if (!$hosts || !function_exists('curl_multi_init')) return []
+	$mh = curl_multi_init()
+	$handles = []
+	foreach ($hosts AS $host){
+		$ch = curl_init()
+		curl_setopt_array($ch, [
+			CURLOPT_URL => 'https://'.$host.'/',
+			CURLOPT_NOBODY => true,
+			CURLOPT_RESOLVE => $local ? [$host.':443:127.0.0.1'] : [],
+			CURLOPT_SSL_VERIFYPEER => false,
+			CURLOPT_SSL_VERIFYHOST => false,
+			CURLOPT_FOLLOWLOCATION => false,
+			CURLOPT_CONNECTTIMEOUT => 3,
+			CURLOPT_TIMEOUT => 5,
+			CURLOPT_RETURNTRANSFER => true,
+		])
+		curl_multi_add_handle($mh, $ch)
+		$handles[$host] = $ch
+	}
+	$running = null
+	while (true){
+		$status = curl_multi_exec($mh, $running)
+		if ($running <= 0 || $status !== CURLM_OK) break
+		curl_multi_select($mh, 1)
+	}
+	$out = []
+	foreach ($handles AS $host => $ch){
+		$out[$host] = ['code' => (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE), 'ms' => (int)round(curl_getinfo($ch, CURLINFO_TOTAL_TIME) * 1000)]
+		curl_multi_remove_handle($mh, $ch)
+		curl_close($ch)
+	}
+	curl_multi_close($mh)
+	return $out
+}
+
+# Hangt per app de http-code + responstijd aan de feed-data.
+static attachPing($data, $local = false){
+	if (!is_array($data) || empty($data['apps'])) return $data
+	$ping = static::ping(array_column($data['apps'], 'host'), $local)
+	foreach ($data['apps'] AS $i => $a){
+		$data['apps'][$i]['code'] = $ping[$a['host']]['code'] ?? 0
+		$data['apps'][$i]['ms'] = $ping[$a['host']]['ms'] ?? 0
+	}
+	return $data
+}
+
+# Verpakt een node-snapshot met node/label/mode/ok/polled-metadata voor de cache.
+static wrapNode($name, $mode, $data){
+	$rec = is_array($data) ? $data : []
+	$rec['node'] = $name
+	$rec['label'] = static::label($name)
+	$rec['mode'] = $mode
+	$rec['ok'] = is_array($data) && isset($data['server'])
+	$rec['polled'] = time()
+	return $rec
+}
+
+# Schrijft één node-cache. Draait als frankenphp, dus de cache krijgt direct de juiste eigenaar
+# (chown is best-effort, no-op buiten root).
+static storeNode($name, $data){
+	$dir = data.'fleet'
+	if (!is_dir($dir)) @mkdir($dir, 0775, true)
+	$file = $dir.'/'.$name.'.json'
+	file_put_contents($file, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))
+	@chown($file, 'frankenphp')
+	@chgrp($file, 'frankenphp')
+}
+
+# Poll-cyclus: lokale node in-process via collect(); pull-peers via HMAC GET /api/feed. Daarna
+# nieuwe prod-fouten naar het centrale messaging-endpoint. (ssh-modus is geretireerd: alles is pull.)
+static poll {
+	static::storeNode('local', static::wrapNode('local', 'self', static::attachPing(static::collect(), true)))
+	$done = ['local']
+	foreach ((static::peers() ?? []) AS $name => $cfg){
+		$mode = (string)($cfg->mode ?? 'pull')
+		$data = null
+		if ($mode === 'pull'){
+			$url = trim((string)($cfg->url ?? ''))
+			$secret = (string)($cfg->secret ?? '')
+			if ($url !== '' && $secret !== ''){
+				$t = (string)time()
+				$headers = ['X-Fleet-Time: '.$t, 'X-Fleet-Sign: '.hash_hmac('sha256', $t, $secret)]
+				try {
+					$data = json_decode((string)HTTP($url.'/api/feed', $headers), true)
+				}
+				catch (\Throwable $e){
+					$data = null
+				}
+			}
+		}
+		static::storeNode($name, static::wrapNode($name, $mode, static::attachPing($data, false)))
+		$done[] = $name
+	}
+	$pushed = static::reportErrors()
+	return ['ok' => true, 'nodes' => $done, 'reported' => $pushed]
+}
+
+# Pusht nieuwe PROD-fouten naar POST /api/notify (secret) → dashboard-inbox + subscription-dispatch.
+# Dev/stage worden overgeslagen (error-reporting uit op dev). Per (hash:count) gededupeerd via reported.json,
+# en alleen fouten van de laatste 15 min. Via HTTP() (geen rauwe curl): het web maakt de melding aan.
+static reportErrors {
+	$c = %creds->notify ?? null
+	$url = (string)($c->url ?? void)
+	$secret = (string)($c->secret ?? void)
+	if ($url === void || $secret === void) return 0
+	$stateFile = data.'fleet/reported.json'
+	$reported = is_file($stateFile) ? (array)json_decode((string)file_get_contents($stateFile), true) : []
+	$pushed = 0
+	foreach (glob(data.'fleet/*.json') ?: [] AS $f){
+		if (basename($f) === 'reported.json') continue
+		$d = json_decode((string)file_get_contents($f), true)
+		if (!is_array($d)) continue
+		$node = (string)($d['node'] ?? basename($f, '.json'))
+		$envByApp = []
+		foreach ((array)($d['apps'] ?? []) AS $a) $envByApp[(string)($a['app'] ?? '')] = (string)($a['env'] ?? 'prod')
+		foreach ((array)($d['errors'] ?? []) AS $app => $info){
+			if (($envByApp[(string)$app] ?? 'prod') !== 'prod') continue
+			foreach ((array)($info['entries'] ?? []) AS $hash => $e){
+				$key = $hash.':'.($e['count'] ?? 0)
+				if (isset($reported[$key])) continue
+				$ts = \DateTime::createFromFormat('j-n-Y H:i:s', (string)($e['lastOccurred'] ?? ''))
+				if (!$ts || $ts->getTimestamp() < time() - 900) continue
+				try {
+					HTTP($url, ['secret: '.$secret], true, [
+						'app' => (string)$app,
+						'type' => 'error',
+						'level' => 'error',
+						'title' => substr((string)($e['msg'] ?? 'Onbekende fout'), 0, 200),
+						'body' => trim((string)($e['file'] ?? '').' · '.($e['count'] ?? 1).'× · laatst '.($e['lastOccurred'] ?? '')),
+						'server' => $node,
+					])
+				}
+				catch (\Throwable $ex){
+					continue
+				}
+				$reported[$key] = time()
+				$pushed++
+			}
+		}
+	}
+	if ($pushed) file_put_contents($stateFile, json_encode($reported))
+	return $pushed
+}
+
+# Geo-verrijking van bezoekersrijen via de lookup-cache + ipgeolocation.io (mist → API + cache).
+static geoEnrich($pdo, $rows, $ipgeoKey){
+	$ips = []
+	foreach ($rows AS $r) if (!empty($r['IP'])) $ips[$r['IP']] = true
+	$ips = array_keys($ips)
+	if (!$ips) return $rows
+	$geo = []
+	$ph = implode(',', array_fill(0, count($ips), '?'))
+	$st = $pdo->prepare('SELECT ip, city, country, lat, lon, isp FROM lookup WHERE ip IN ('.$ph.')')
+	$st->execute($ips)
+	foreach ($st->fetchAll(\PDO::FETCH_ASSOC) AS $g) $geo[$g['ip']] = $g
+	if ($ipgeoKey !== '') foreach ($ips AS $ip){
+		if (isset($geo[$ip]) || !filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) continue
+		$res = null
+		try {
+			$res = @json_decode((string)HTTP('https://api.ipgeolocation.io/ipgeo?apiKey='.$ipgeoKey.'&ip='.$ip))
+		}
+		catch (\Throwable $e){}
+		if (!is_object($res) || !isset($res->country_code2)) continue
+		$g = ['ip' => $ip, 'city' => (string)($res->city ?? ''), 'country' => (string)($res->country_code2 ?? ''), 'lat' => (string)($res->latitude ?? ''), 'lon' => (string)($res->longitude ?? ''), 'isp' => (string)($res->isp ?? '')]
+		try {
+			$pdo->prepare('INSERT IGNORE INTO lookup (ip, city, country, lat, lon, isp) VALUES (?,?,?,?,?,?)')->execute([$g['ip'], $g['city'], $g['country'], $g['lat'], $g['lon'], $g['isp']])
+		}
+		catch (\Throwable $e){}
+		$geo[$ip] = $g
+	}
+	foreach ($rows AS $i => $r){
+		$g = $geo[$r['IP'] ?? ''] ?? []
+		$rows[$i]['city'] = $g['city'] ?? null
+		$rows[$i]['country'] = $g['country'] ?? null
+		$rows[$i]['isp'] = $g['isp'] ?? null
+		$rows[$i]['lat'] = $g['lat'] ?? null
+		$rows[$i]['lon'] = $g['lon'] ?? null
+	}
+	return $rows
+}
+
+# Volledig bezoekers-rapport (lijst + aggregaties) uit de lokale DB - geserveerd via GET /api/visitors.
+static visitorReport {
+	$ini = @parse_ini_file(static::base().'/dashboard/data/creds.ini', true, INI_SCANNER_RAW)
+	$db = is_array($ini) ? ($ini['mysql'] ?? null) : null
+	$ipgeoKey = is_array($ini) ? (string)($ini['ipgeolocation'] ?? '') : ''
+	if (!is_array($db) || empty($db['host']) || empty($db['database'])) return []
+	try {
+		$pdo = new \PDO('mysql:host='.$db['host'].';dbname='.$db['database'].';charset=utf8mb4', (string)($db['user'] ?? ''), (string)($db['password'] ?? ''), [\PDO::ATTR_TIMEOUT => 5, \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION])
+		if (!$pdo->query("SHOW TABLES LIKE 'visitors'")->fetchColumn()) return []
+	}
+	catch (\Throwable $e){
+		return []
+	}
+	$now = time()
+	$d30 = $now - 86400 * 30
+	try {
+		$recent = static::geoEnrich($pdo, $pdo->query('SELECT * FROM visitors ORDER BY changed DESC LIMIT 200')->fetchAll(\PDO::FETCH_ASSOC) ?: [], $ipgeoKey)
+		return [
+			'active' => (int)$pdo->query('SELECT COUNT(id) FROM visitors WHERE changed > '.($now - 300))->fetchColumn(),
+			'recent' => $recent,
+			'countries' => $pdo->query('SELECT COALESCE(l.country, "Onbekend") AS country, COUNT(v.id) AS count FROM visitors v LEFT JOIN lookup l ON v.IP = l.ip WHERE v.changed > '.$d30.' GROUP BY country ORDER BY count DESC LIMIT 5')->fetchAll(\PDO::FETCH_ASSOC) ?: [],
+			'browsers' => $pdo->query('SELECT browser, COUNT(id) AS count FROM visitors WHERE changed > '.$d30.' GROUP BY browser ORDER BY count DESC LIMIT 5')->fetchAll(\PDO::FETCH_ASSOC) ?: [],
+			'referrers' => $pdo->query('SELECT referrer, COUNT(id) AS count FROM visitors WHERE referrer IS NOT NULL AND changed > '.$d30.' GROUP BY referrer ORDER BY count DESC LIMIT 8')->fetchAll(\PDO::FETCH_ASSOC) ?: [],
+		]
+	}
+	catch (\Throwable $e){
+		return []
+	}
 }
 
 # Federatie: een peer-node laat de master een master-user authenticeren voor één van zijn
@@ -150,9 +511,7 @@ route GET api visitors {
 		%res->body = json_encode(['error' => 'unauthorized'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
 		return %res->render(401)
 	}
-	defined('FLEET_COLLECT_LIB') || define('FLEET_COLLECT_LIB', 1)
-	require_once app.'fleet.collect.php'
-	%res->body = json_encode(fleet_visitor_report(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+	%res->body = json_encode(static::visitorReport(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
 	return %res->render()
 }
 
