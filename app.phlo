@@ -18,6 +18,7 @@ method navMenu {
 	$full = [
 			'scanlog'  => ['icon' => '📸', 'uri' => 'scanlog', 'title' => 'Scanlog', 'admin' => false],
 		'overview' => ['icon' => '🏠', 'uri' => 'overview', 'title' => 'Overzicht', 'admin' => false],
+		'graph'    => ['icon' => '🕸️', 'uri' => 'graph', 'title' => 'Graph', 'admin' => false],
 		'visitor'  => ['icon' => '👁️', 'uri' => 'visitors', 'title' => 'Bezoekers', 'admin' => true],
 		'domain'   => ['icon' => '🌍', 'uri' => 'domains',  'title' => 'Domeinen', 'admin' => true],
 		'site'     => ['icon' => '🌐', 'uri' => 'sites',    'title' => 'Sites', 'admin' => true],

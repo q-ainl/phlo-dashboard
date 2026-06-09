@@ -9,7 +9,7 @@ phlo_app (
 	build: false,                    # dev: true, prod: false
 	debug: false,                    # dev: true, prod: false
 	dashboard: 'phlo',
-	app: '/srv/control/dashboard/',  # jordi: /files/Server/control/dashboard/
+	app: '/srv/control/dashboard/',  # pad per node aanpassen (sommige nodes wijken af)
 	websocket: 3001,
 	files: '/srv/control/files/',
 	images: '/srv/control/files/images/',

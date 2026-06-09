@@ -36,9 +36,9 @@ static sendWhatsapp($chatId, $message){
 
 static schema => arr (
 	id: field (type: 'token', length: 10, title: 'ID', list: false, record: false),
-	user_id: field (type: 'text', title: 'Gebruiker-ID', length: 10, required: true),
-	server: field (type: 'text', title: 'Server (* = alle)', length: 40, default: '*'),
-	event: field (type: 'text', title: 'Event (error / order / * )', length: 40, default: '*'),
+	user_id: field (type: 'parent', obj: 'user', title: 'Gebruiker', length: 10, required: true),
+	server: field (type: 'select', title: 'Server', options: array_merge(['*'], fleet::nodes()), length: 40, default: '*'),
+	event: field (type: 'select', title: 'Event', options: ['*', 'error', 'order', 'payment', 'user'], length: 40, default: '*'),
 	channel: field (type: 'select', title: 'Kanaal', options: ['whatsapp', 'dashboard'], default: 'whatsapp'),
 	target: field (type: 'text', title: 'WhatsApp chatId', length: 60, list: false),
 	active: field (type: 'bool', title: 'Actief', true: 'Aan', false: 'Uit'),

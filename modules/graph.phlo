@@ -1,0 +1,612 @@
+static regDomain($host){
+	$p = explode('.', (string)$host)
+	return count($p) >= 2 ? implode('.', array_slice($p, -2)) : (string)$host
+}
+
+static msgByApp {
+	$out = []
+	if (!phlo_exists('message')) return $out
+	$u = auth::user()
+	if (!$u) return $out
+	foreach (message::records(order: 'created DESC', limit: 500) AS $m){
+		if (!$u->canServer((string)$m->server)) continue
+		$a = (string)$m->app
+		$out[$a] = (int)($out[$a] ?? 0) + 1
+	}
+	return $out
+}
+
+static graphData {
+	$nodes = []
+	$edges = []
+	$msg = static::msgByApp()
+	$servers = auth::servers()
+	$fleetVis = 0
+	$fleetErr = 0
+	$hostCount = 0
+	$domains = []
+	foreach ($servers AS $node){
+		$feed = fleet::cached($node)
+		if (!$feed) continue
+		$visitors = (array)($feed['visitors'] ?? [])
+		$errors = (array)($feed['errors'] ?? [])
+		$apps = (array)($feed['apps'] ?? [])
+		$metrics = (array)($feed['metrics'] ?? [])
+		$svErr = 0
+		foreach ($errors AS $e) $svErr += (int)($e['occurrences'] ?? 0)
+		$svVis = (int)array_sum($visitors)
+		$sid = 'server:'.$node
+		$nodes[] = [
+			'id' => $sid,
+			'type' => 'server',
+			'label' => (string)($feed['label'] ?? $node),
+			'server' => (string)($feed['server'] ?? $node),
+			'phlo' => (string)($feed['phlo'] ?? ''),
+			'polled' => (int)($feed['polled'] ?? ($feed['time'] ?? 0)),
+			'hosts' => count($apps),
+			'vis' => $svVis,
+			'err' => $svErr,
+			'load' => (float)($metrics['load1'] ?? 0),
+			'cpus' => (int)($metrics['cpu_count'] ?? 0),
+			'memUsed' => (int)($metrics['mem_used'] ?? 0),
+			'memTotal' => (int)($metrics['mem_total'] ?? 0),
+			'diskUsed' => (int)($metrics['disk_used'] ?? 0),
+			'diskTotal' => (int)($metrics['disk_total'] ?? 0),
+			'uptime' => (int)($metrics['uptime_sec'] ?? 0),
+		]
+		$edges[] = ['from' => 'hub', 'to' => $sid, 'kind' => 'fleet']
+		$fleetVis += $svVis
+		$fleetErr += $svErr
+		foreach ($apps AS $a){
+			$host = (string)($a['host'] ?? '')
+			if ($host === '') continue
+			$aliases = array_values((array)($a['aliases'] ?? []))
+			$app = (string)($a['app'] ?? $host)
+			$vis = (int)($visitors[$host] ?? 0) + (int)array_sum(array_map(fn($al) => (int)($visitors[$al] ?? 0), $aliases))
+			$hid = 'host:'.$node.':'.$host
+			$nodes[] = [
+				'id' => $hid,
+				'type' => 'host',
+				'label' => $host,
+				'host' => $host,
+				'aliases' => $aliases,
+				'node' => $node,
+				'app' => $app,
+				'env' => (string)($a['env'] ?? 'prod'),
+				'code' => (int)($a['code'] ?? 0),
+				'ms' => (int)($a['ms'] ?? 0),
+				'vis' => $vis,
+				'err' => (int)($errors[$app]['occurrences'] ?? 0),
+				'errLatest' => (string)($errors[$app]['latest'] ?? ''),
+				'notif' => (int)($msg[$app] ?? 0),
+			]
+			$edges[] = ['from' => $sid, 'to' => $hid, 'kind' => 'host']
+			$domains[static::regDomain($host)][] = $hid
+			$hostCount++
+		}
+	}
+	foreach ($domains AS $dom => $ids){
+		if (count($ids) < 2) continue
+		$anchor = $ids[0]
+		foreach (array_slice($ids, 1) AS $other) $edges[] = ['from' => $anchor, 'to' => $other, 'kind' => 'domain']
+	}
+	$nodes[] = ['id' => 'hub', 'type' => 'hub', 'label' => 'fleet', 'servers' => count($servers), 'hosts' => $hostCount, 'vis' => $fleetVis, 'err' => $fleetErr]
+	return ['nodes' => $nodes, 'edges' => $edges]
+}
+
+method graphData64 => base64_encode(json_encode(static::graphData()))
+
+route both GET graph {
+	%app->active = 'graph'
+	main(%graph->page, 'Graph')
+}
+
+view page:
+<div.fg-page>
+	<header.dash-head.fg-head>
+		<div.fg-titles>
+			<h1.dash-title>{{ overview::icon('activity', 24, 'blue') }}<span.grad>Fleet Graph</span></h1>
+		</div>
+		<div.fg-legend>
+			<span.fg-li><span.fg-dot.fg-dot--server/><span>Server</span></span>
+			<span.fg-li><span.fg-dot.fg-dot--prod/><span>Prod</span></span>
+			<span.fg-li><span.fg-dot.fg-dot--stage/><span>Stage</span></span>
+			<span.fg-li><span.fg-dot.fg-dot--dev/><span>Dev</span></span>
+			<span.fg-li><span.fg-dot.fg-dot--err/><span>Errors</span></span>
+		</div>
+	</header>
+	<div.fg-wrap><canvas#fleet-graph data-graph="$this->graphData64"></canvas><div#fg-info.fg-info></div></div>
+</div>
+
+<script>
+onExist('#fleet-graph', canvas => {
+	if (canvas.fgInit) return
+	canvas.fgInit = true
+	const ctx = canvas.getContext('2d')
+	const raw = JSON.parse(atob(canvas.dataset.graph))
+	const info = obj('#fg-info')
+	const wrap = canvas.parentElement
+	const FOV = 220, ZOFF = 300, neutralSc = FOV / (FOV + ZOFF)
+	const envCol = {prod: '#5cb8a0', stage: '#e0a93c', dev: '#7a8a9a'}
+	const nodes = raw.nodes || []
+	const edges = (raw.edges || []).map(e => ({a: e.from, b: e.to, kind: e.kind}))
+	const map = {}
+	nodes.forEach(n => {
+		n.x = (Math.random() - 0.5) * 140
+		n.y = (Math.random() - 0.5) * 140
+		n.z = (Math.random() - 0.5) * 140
+		n.vx = 0
+		n.vy = 0
+		n.vz = 0
+		n.r = n.type === 'hub' ? 36 : n.type === 'server' ? 28 : 7 + Math.min(10, Math.log2((n.vis || 0) + 1) * 2)
+		n.px = n.x
+		n.py = n.y
+		n.pz = 0
+		n.pscale = neutralSc
+		map[n.id] = n
+	})
+	const col = n => n.type === 'hub' ? '#bef264' : n.type === 'server' ? (n.err > 0 ? '#ff5d7a' : '#5b9bff') : (envCol[n.env] || '#7a8a9a')
+	const hexShift = (hex, amt) => {
+		const v = i => Math.max(0, Math.min(255, Math.round(parseInt(hex.slice(i, i + 2), 16) + amt * 255)))
+		return `rgb(${v(1)},${v(3)},${v(5)})`
+	}
+	let rotY = 0, rotX = 0.35, zoom = 1, ox = 0, oy = 0, drag = null, panFrom = null, panOrig = null, didDrag = false, hoverNode = null, pinNode = null, autoRotate = true, simRun = true, settle = 0, fitted = false, shownNode = null, lastT = 0
+	const sim = () => {
+		nodes.forEach(n => {
+			n.fx = 0
+			n.fy = 0
+			n.fz = 0
+		})
+		nodes.forEach((a, i) => nodes.slice(i + 1).forEach(b => {
+			const dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z
+			const d = Math.sqrt(dx*dx + dy*dy + dz*dz) || 0.01
+			const f = 3200 * ((a.r + b.r + 20) / 34) / (d*d)
+			a.fx += dx/d*f
+			a.fy += dy/d*f
+			a.fz += dz/d*f
+			b.fx -= dx/d*f
+			b.fy -= dy/d*f
+			b.fz -= dz/d*f
+		}))
+		edges.forEach(e => {
+			const a = map[e.a], b = map[e.b]
+			if (!a || !b) return
+			const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z
+			const d = Math.sqrt(dx*dx + dy*dy + dz*dz) || 0.01
+			const k = e.kind === 'domain' ? 150 : Math.max(70, a.r + b.r + 34)
+			const f = (d - k) * (e.kind === 'domain' ? 0.012 : 0.04)
+			a.fx += dx/d*f
+			a.fy += dy/d*f
+			a.fz += dz/d*f
+			b.fx -= dx/d*f
+			b.fy -= dy/d*f
+			b.fz -= dz/d*f
+		})
+		let mv = false
+		nodes.forEach(n => {
+			if (n.pin) return
+			n.fx -= n.x * 0.011
+			n.fy -= n.y * 0.011
+			n.fz -= n.z * 0.011
+			n.vx = (n.vx + n.fx) * 0.6
+			n.vy = (n.vy + n.fy) * 0.6
+			n.vz = (n.vz + n.fz) * 0.6
+			n.x += n.vx
+			n.y += n.vy
+			n.z += n.vz
+			if (Math.abs(n.vx) + Math.abs(n.vy) + Math.abs(n.vz) > 0.08) mv = true
+		})
+		return mv
+	}
+	const project = () => {
+		const cy = Math.cos(rotY), sy = Math.sin(rotY), cx = Math.cos(rotX), sx = Math.sin(rotX)
+		nodes.forEach(n => {
+			const xv = n.x * cy + n.z * sy
+			const zv = -n.x * sy + n.z * cy
+			const yv2 = n.y * cx - zv * sx
+			const zv2 = n.y * sx + zv * cx
+			const sc = FOV / (FOV + zv2 + ZOFF)
+			n.px = xv * sc
+			n.py = yv2 * sc
+			n.pz = zv2
+			n.pscale = sc
+		})
+	}
+	const fit = () => {
+		project()
+		let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+		nodes.forEach(n => {
+			const rr = n.r * n.pscale
+			minX = Math.min(minX, n.px - rr)
+			maxX = Math.max(maxX, n.px + rr)
+			minY = Math.min(minY, n.py - rr)
+			maxY = Math.max(maxY, n.py + rr)
+		})
+		const pw = maxX - minX, ph = maxY - minY
+		if (pw <= 0 || ph <= 0) return
+		zoom = Math.min(6, Math.max(0.15, Math.min(canvas.width / (pw * 1.2), canvas.height / (ph * 1.2))))
+		ox = -(minX + maxX) / 2 * zoom
+		oy = -(minY + maxY) / 2 * zoom
+	}
+	const size = () => {
+		const w = wrap.clientWidth, h = wrap.clientHeight
+		if (canvas.width === w && canvas.height === h) return false
+		canvas.width = w
+		canvas.height = h
+		canvas.style.width = w + 'px'
+		canvas.style.height = h + 'px'
+		return true
+	}
+	const scr = n => ({x: canvas.width/2 + ox + n.px * zoom, y: canvas.height/2 + oy + n.py * zoom})
+	const draw = () => {
+		project()
+		const W = canvas.width, H = canvas.height
+		ctx.clearRect(0, 0, W, H)
+		ctx.save()
+		ctx.translate(W/2 + ox, H/2 + oy)
+		ctx.scale(zoom, zoom)
+		const focus = pinNode || hoverNode
+		edges.forEach(e => {
+			const a = map[e.a], b = map[e.b]
+			if (!a || !b) return
+			const lit = focus && (a === focus || b === focus)
+			const depth = Math.min(1, ((a.pscale + b.pscale) * 0.5 / neutralSc) ** 2)
+			ctx.globalAlpha = (focus && !lit ? 0.07 : e.kind === 'host' ? 0.8 : e.kind === 'fleet' ? 0.6 : 0.4) * depth
+			ctx.strokeStyle = lit ? 'rgba(255,255,255,0.9)' : e.kind === 'domain' ? '#7a5a9a' : e.kind === 'fleet' ? '#4a7aa5' : '#74acda'
+			ctx.lineWidth = (lit ? 2.2 : e.kind === 'domain' ? 0.7 : e.kind === 'host' ? 1.7 : 1.2) / zoom
+			ctx.setLineDash(e.kind === 'domain' ? [3/zoom, 3/zoom] : [])
+			ctx.beginPath()
+			ctx.moveTo(a.px, a.py)
+			ctx.lineTo(b.px, b.py)
+			ctx.stroke()
+		})
+		ctx.setLineDash([])
+		ctx.globalAlpha = 1
+		nodes.slice().sort((a, b) => b.pz - a.pz).forEach(n => {
+			const sr = n.r * n.pscale
+			if (sr <= 0) return
+			const lit = !focus || n === focus || edges.some(e => (e.a === focus.id && e.b === n.id) || (e.b === focus.id && e.a === n.id))
+			const depthA = Math.max(0.12, Math.min(1, (n.pscale / neutralSc) ** 3))
+			ctx.globalAlpha = (lit ? 1 : 0.16) * depthA
+			const base = col(n)
+			if (n.type !== 'host'){
+				ctx.beginPath()
+				ctx.arc(n.px, n.py, sr * 1.9, 0, Math.PI*2)
+				const gl = ctx.createRadialGradient(n.px, n.py, sr*0.6, n.px, n.py, sr*1.9)
+				gl.addColorStop(0, base + '4d')
+				gl.addColorStop(1, base + '00')
+				ctx.fillStyle = gl
+				ctx.fill()
+			}
+			const grad = ctx.createRadialGradient(n.px, n.py - sr*0.35, sr*0.05, n.px, n.py, sr)
+			grad.addColorStop(0, hexShift(base, 0.36))
+			grad.addColorStop(0.5, base)
+			grad.addColorStop(1, hexShift(base, -0.46))
+			ctx.beginPath()
+			ctx.arc(n.px, n.py, sr, 0, Math.PI*2)
+			ctx.fillStyle = grad
+			ctx.fill()
+			if (n.err > 0 && n.type !== 'hub'){
+				ctx.beginPath()
+				ctx.arc(n.px, n.py, sr + 2.5/zoom, 0, Math.PI*2)
+				ctx.strokeStyle = '#e05a7a'
+				ctx.lineWidth = 1.6/zoom
+				ctx.stroke()
+			}
+			if (n === focus){
+				ctx.beginPath()
+				ctx.arc(n.px, n.py, sr + 5/zoom, 0, Math.PI*2)
+				ctx.strokeStyle = 'rgba(255,255,255,0.92)'
+				ctx.lineWidth = 2/zoom
+				ctx.stroke()
+			}
+			const fs = Math.max(5, n.r * Math.min(1.3, n.pscale / neutralSc) * 0.26)
+			ctx.globalAlpha = (lit ? 1 : 0.3) * Math.max(0.45, depthA)
+			ctx.fillStyle = '#fff'
+			ctx.textAlign = 'center'
+			ctx.textBaseline = 'middle'
+			ctx.font = `${fs}px Inter,system-ui,sans-serif`
+			ctx.fillText(n.label, n.px, n.py)
+		})
+		ctx.restore()
+	}
+	const toW = (sx, sy) => ({x: (sx - canvas.width/2 - ox) / zoom, y: (sy - canvas.height/2 - oy) / zoom})
+	const hit = (wx, wy) => {
+		let found = null
+		nodes.slice().sort((a, b) => a.pz - b.pz).forEach(n => {
+			const pr = n.r * n.pscale + 4
+			const dx = wx - n.px, dy = wy - n.py
+			if (dx*dx + dy*dy <= pr*pr) found = n
+		})
+		return found
+	}
+	const pct = (u, t) => t > 0 ? Math.round(u / t * 100) + '%' : ''
+	const fmtUp = s => s >= 86400 ? Math.floor(s/86400) + 'd ' + Math.floor((s%86400)/3600) + 'u' : s >= 3600 ? Math.floor(s/3600) + 'u ' + Math.floor((s%3600)/60) + 'm' : Math.floor(s/60) + 'm'
+	const row = (k, v) => v === '' || v == null ? '' : `<div class="fg-row"><span>${k}</span><b>${v}</b></div>`
+	const bad = v => `<span class="fg-bad">${v}</span>`
+	const buildInfo = n => {
+		if (n.type === 'hub') return `<header class="fg-ih"><span class="fg-dot fg-dot--server"></span><h2>Fleet</h2></header>` + row('Servers', n.servers) + row('Hosts', n.hosts) + row('Bezoekers', n.vis) + row('Errors', n.err ? bad(n.err) : 0)
+		if (n.type === 'server') return `<header class="fg-ih"><span class="fg-dot fg-dot--server"></span><h2>${n.label}</h2></header>` + row('Server', n.server) + row('Phlo', n.phlo) + row('Hosts', n.hosts) + row('Bezoekers', n.vis) + row('Errors', n.err ? bad(n.err) : 0) + row('Load', n.cpus ? n.load.toFixed(2) + ' / ' + n.cpus : n.load.toFixed(2)) + row('Geheugen', pct(n.memUsed, n.memTotal)) + row('Schijf', pct(n.diskUsed, n.diskTotal)) + row('Uptime', n.uptime ? fmtUp(n.uptime) : '') + `<div class="fg-acts"><a class="async" href="/node/${n.label}">Node-detail</a></div>`
+		const st = n.code >= 200 && n.code < 400 ? `<span class="fg-ok">${n.code}</span>` : bad(n.code || '-')
+		return `<header class="fg-ih"><span class="fg-dot fg-dot--${n.env}"></span><h2>${n.label}</h2></header>` + row('Server', n.node) + row('App', n.app) + row('Omgeving', n.env) + row('Status', st + (n.ms ? ` · ${n.ms}ms` : '')) + row('Bezoekers', n.vis) + row('Errors', n.err ? bad(n.err) : 0) + row('Meldingen', n.notif || 0) + (n.aliases && n.aliases.length ? row('Aliassen', n.aliases.join('<br>')) : '') + `<div class="fg-acts"><a href="https://${n.host}/" target="_blank" rel="noopener">Open site ↗</a><a class="async" href="/errors/${n.node}/${n.app}">Errors</a></div>`
+	}
+	const showInfo = n => {
+		if (!n){
+			info.className = 'fg-info'
+			shownNode = null
+			return
+		}
+		if (n !== shownNode){
+			info.innerHTML = buildInfo(n)
+			shownNode = n
+		}
+		info.className = 'fg-info show' + (n === pinNode ? ' pinned' : '')
+	}
+	const placeInfo = n => {
+		const s = scr(n)
+		const iw = info.offsetWidth, ih = info.offsetHeight
+		let x = s.x + 18, y = s.y + 18
+		if (x + iw > canvas.width - 8) x = s.x - iw - 18
+		if (x < 8) x = 8
+		if (y + ih > canvas.height - 8) y = canvas.height - ih - 8
+		if (y < 8) y = 8
+		info.style.left = x + 'px'
+		info.style.top = y + 'px'
+	}
+	const start = () => {
+		simRun = true
+		settle = 0
+	}
+	const loop = ts => {
+		if (!canvas.isConnected) return
+		size()
+		if (!fitted && canvas.width > 10 && canvas.height > 10){
+			fit()
+			fitted = true
+		}
+		const dt = lastT ? Math.min(ts - lastT, 64) : 16
+		lastT = ts
+		if (autoRotate && !pinNode) rotY += 0.003 * (dt / 16)
+		if (simRun){
+			if (sim()) settle = 0
+			else settle++
+			if (settle > 45) simRun = false
+		}
+		draw()
+		const focus = pinNode || hoverNode
+		if (focus) placeInfo(focus)
+		requestAnimationFrame(loop)
+	}
+	canvas.addEventListener('contextmenu', e => e.preventDefault())
+	canvas.addEventListener('mouseenter', () => autoRotate = false)
+	canvas.addEventListener('mouseleave', () => {
+		autoRotate = true
+		if (!drag && !panFrom && !pinNode){
+			hoverNode = null
+			showInfo(null)
+		}
+	})
+	canvas.addEventListener('mousemove', e => {
+		if (drag || panFrom) return
+		const w = toW(e.offsetX, e.offsetY)
+		const n = hit(w.x, w.y)
+		canvas.style.cursor = n ? 'pointer' : 'grab'
+		if (n !== hoverNode){
+			hoverNode = n
+			if (!pinNode) showInfo(n)
+		}
+	})
+	canvas.addEventListener('wheel', e => {
+		e.preventDefault()
+		zoom = Math.max(0.15, Math.min(6, zoom * (e.deltaY < 0 ? 1.12 : 0.89)))
+	}, {passive: false})
+	canvas.addEventListener('mousedown', e => {
+		if (e.button === 2){
+			canvas.requestPointerLock()
+			const rotMove = e2 => {
+				rotY = (rotY + e2.movementX * 0.008) % (Math.PI * 2)
+				rotX = (rotX + e2.movementY * 0.008) % (Math.PI * 2)
+			}
+			const rotUp = () => {
+				document.exitPointerLock()
+				window.removeEventListener('mousemove', rotMove)
+				window.removeEventListener('mouseup', rotUp)
+			}
+			window.addEventListener('mousemove', rotMove)
+			window.addEventListener('mouseup', rotUp)
+			return
+		}
+		if (e.button !== 0) return
+		didDrag = false
+		const w = toW(e.offsetX, e.offsetY), n = hit(w.x, w.y)
+		if (n){
+			drag = n
+			n.pin = true
+			n._pz = n.pz || 0
+		}
+		else {
+			panFrom = {x: e.clientX, y: e.clientY}
+			panOrig = {x: ox, y: oy}
+		}
+		const onMove = e2 => {
+			didDrag = true
+			const rect = canvas.getBoundingClientRect()
+			const w2 = toW(e2.clientX - rect.left, e2.clientY - rect.top)
+			if (drag){
+				const cy = Math.cos(rotY), sy = Math.sin(rotY), cx = Math.cos(rotX), sx = Math.sin(rotX)
+				const sc = drag.pscale || 1, pz = drag._pz || 0
+				const xv = w2.x / sc, yv2 = w2.y / sc
+				const yv = yv2 * cx + pz * sx
+				const zv = -yv2 * sx + pz * cx
+				drag.x = xv * cy - zv * sy
+				drag.z = xv * sy + zv * cy
+				drag.y = yv
+				drag.vx = 0
+				drag.vy = 0
+				drag.vz = 0
+				canvas.style.cursor = 'grabbing'
+				start()
+			}
+			else if (panFrom){
+				ox = panOrig.x + e2.clientX - panFrom.x
+				oy = panOrig.y + e2.clientY - panFrom.y
+				canvas.style.cursor = 'grabbing'
+			}
+		}
+		const onUp = () => {
+			if (drag){
+				if (!didDrag){
+					pinNode = pinNode === drag ? null : drag
+					showInfo(pinNode || hoverNode)
+				}
+				drag.pin = false
+				drag = null
+				start()
+			}
+			else if (!didDrag){
+				pinNode = null
+				showInfo(hoverNode)
+			}
+			panFrom = null
+			canvas.style.cursor = 'grab'
+			window.removeEventListener('mousemove', onMove)
+			window.removeEventListener('mouseup', onUp)
+		}
+		window.addEventListener('mousemove', onMove)
+		window.addEventListener('mouseup', onUp)
+	})
+	canvas.style.position = 'absolute'
+	size()
+	let warm = 150
+	while (warm-- > 0) sim()
+	start()
+	requestAnimationFrame(loop)
+})
+</script>
+
+<style>
+main:has(.fg-page) {
+	display: flex
+	flex-direction: column
+	min-height: 0
+}
+.fg-page {
+	display: flex
+	flex: 1
+	flex-direction: column
+	min-height: 0
+	overflow: hidden
+}
+.fg-head {
+	align-items: flex-start
+	flex-shrink: 0
+	flex-wrap: wrap
+	gap: .75rem
+}
+.fg-titles {
+	flex: 1
+}
+.fg-legend {
+	align-items: center
+	color: $muted
+	display: flex
+	flex-wrap: wrap
+	font-size: .75rem
+	gap: .9rem
+}
+.fg-li {
+	align-items: center
+	display: inline-flex
+	gap: .35rem
+}
+.fg-dot {
+	border-radius: 50%
+	display: inline-block
+	height: .65rem
+	width: .65rem
+}
+.fg-dot--server: background: #6fe2de
+.fg-dot--prod: background: #5cb8a0
+.fg-dot--stage: background: #e0a93c
+.fg-dot--dev: background: #7a8a9a
+.fg-dot--err: background: #e05a7a
+.fg-wrap {
+	background: radial-gradient(circle at 50% 40%, rgba(255,255,255,.045), transparent 72%)
+	flex: 1
+	min-height: 0
+	overflow: hidden
+	position: relative
+}
+.fg-canvas {
+	bottom: 0
+	cursor: grab
+	display: block
+	left: 0
+	position: absolute
+	right: 0
+	top: 0
+	touch-action: none
+}
+.fg-info {
+	background: $surface
+	border: 1px solid $border
+	border-radius: 8px
+	box-shadow: 0 10px 30px rgba(0,0,0,.4)
+	display: none
+	left: 0
+	max-width: 17rem
+	min-width: 12rem
+	padding: .65rem .75rem
+	pointer-events: none
+	position: absolute
+	top: 0
+	z-index: 6
+}
+.fg-info.show: display: block
+.fg-info.pinned: pointer-events: auto
+.fg-ih {
+	align-items: center
+	border-bottom: 1px solid $border
+	display: flex
+	gap: .5rem
+	margin-bottom: .5rem
+	padding-bottom: .5rem
+}
+.fg-ih h2 {
+	font-size: .95rem
+	margin: 0
+	word-break: break-all
+}
+.fg-row {
+	display: flex
+	font-size: .8rem
+	gap: .75rem
+	justify-content: space-between
+	padding: .16rem 0
+}
+.fg-row span: color: $muted
+.fg-row b {
+	color: $text
+	font-weight: 600
+	text-align: right
+	word-break: break-all
+}
+.fg-ok: color: $success
+.fg-bad: color: $error
+.fg-acts {
+	display: flex
+	flex-wrap: wrap
+	gap: .5rem
+	margin-top: .85rem
+}
+.fg-acts a {
+	background: $bg
+	border: 1px solid $border
+	border-radius: 6px
+	color: $primary
+	font-size: .8rem
+	padding: .35rem .6rem
+	text-decoration: none
+}
+.fg-acts a:hover: border-color: $primary
+</style>

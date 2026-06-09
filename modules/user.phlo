@@ -8,6 +8,9 @@ static order = 'name ASC'
 static objValidate = true
 
 prop displayName => $this->name ?: $this->email
+
+# Beschikbare modules waarop een (gescopede) user rechten kan krijgen - fleet-breed.
+static moduleOptions => ['overview', 'visitor', 'domain', 'site', 'whatsapp', 'message', 'subscription', 'user', 'scanlog']
 prop serverIds => array_filter(array_map('trim', explode(',', (string)$this->allowed_servers)))
 prop moduleIds => array_filter(array_map('trim', explode(',', (string)$this->allowed_modules)))
 prop isAdmin => $this->role === 'admin'
@@ -86,14 +89,16 @@ static schema => arr (
 		default: 'user',
 	),
 	allowed_servers: field (
-		type: 'text',
-		title: 'Servers (CSV node-namen; leeg = geen)',
+		type: 'multiselect',
+		title: 'Servers (geen = admin: alle)',
+		options: fleet::nodes(),
 		length: 255,
 		list: false,
 	),
 	allowed_modules: field (
-		type: 'text',
-		title: 'Modules (CSV; leeg = alle)',
+		type: 'multiselect',
+		title: 'Modules (geen = alle)',
+		options: user::moduleOptions(),
 		length: 255,
 		list: false,
 	),

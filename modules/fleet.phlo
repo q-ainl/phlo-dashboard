@@ -37,12 +37,19 @@ static authFed($email, $module){
 	return false
 }
 
+static label($name){
+	if ($name === 'local') return (string)(%creds->node->label ?? 'Local')
+	$peer = static::peers()?->$name ?? null
+	return (string)($peer->label ?? $name)
+}
+
 static cached($name){
 	$file = data.'fleet/'.$name.'.json'
 	if (!is_file($file)) return null
 	$data = json_decode((string)file_get_contents($file), true)
 	if (!is_array($data)) return null
 	$data['age'] = time() - (int)($data['time'] ?? 0)
+	$data['label'] ??= static::label($name)
 	return $data
 }
 
