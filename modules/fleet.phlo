@@ -55,13 +55,33 @@ static caddyApps {
 				$hostnames[] = $host
 			}
 			if (!$hostnames) continue
-			$nonWww = array_values(array_filter($hostnames, fn($h) => !str_starts_with($h, 'www.')))
-			$candidates = $nonWww ?: $hostnames
+			# Redirect-bewust: hosts die binnen het blok via een @host-matcher worden geredirect tellen niet
+			# als canoniek mee (zo wint jordiboerman.nl van jordi.nu, prestige van dblegaltax). Een blok dat
+			# als geheel redirect (bare redir, geen matcher) = redirect-only → vlag (geen echte app-host).
+			$redirected = []
+			$pureRedirect = false
+			$matchers = []
+			if (preg_match_all('/@(\w+)\s+host\s+([^\n{]+)/', $b['block'], $mm, PREG_SET_ORDER)){
+				foreach ($mm AS $m) $matchers[$m[1]] = preg_split('/\s+/', trim($m[2]))
+			}
+			if (preg_match_all('/(?:^|\n)\s*redir(?:ect)?\s+(@\w+|\S+)/', $b['block'], $rr, PREG_SET_ORDER)){
+				foreach ($rr AS $r){
+					if (str_starts_with($r[1], '@')) $redirected = array_merge($redirected, $matchers[substr($r[1], 1)] ?? [])
+					else $pureRedirect = true
+				}
+			}
+			$canonical = array_values(array_diff($hostnames, $redirected))
+			if (!$canonical){
+				$pureRedirect = true
+				$canonical = $hostnames
+			}
+			$nonWww = array_values(array_filter($canonical, fn($h) => !str_starts_with($h, 'www.')))
+			$candidates = $nonWww ?: $canonical
 			usort($candidates, fn($a, $c) => strlen($a) <=> strlen($c) ?: strcmp($a, $c))
 			$primary = $candidates[0]
 			$he = str_starts_with($primary, 'dev.') ? 'dev' : (str_starts_with($primary, 'stage.') ? 'stage' : $env)
 			$aliases = array_values(array_filter($hostnames, fn($h) => $h !== $primary))
-			$apps[] = ['host' => $primary, 'aliases' => $aliases, 'env' => $he, 'app' => $appName]
+			$apps[] = ['host' => $primary, 'aliases' => $aliases, 'env' => $he, 'app' => $appName, 'redirect' => $pureRedirect]
 		}
 	}
 	return $apps
