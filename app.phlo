@@ -4,7 +4,7 @@ prop title = 'Phlo Dashboard'
 prop themeColor = 'black'
 prop theme => %session->theme ?? 'ionstorm'
 prop trans => %session->trans ?? 'ripple'
-prop version = '1.3.0'
+prop version = '1.3.1'
 prop model = 'gpt-4o-mini'
 prop publicPaths = ['api']
 

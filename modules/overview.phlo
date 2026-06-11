@@ -344,6 +344,8 @@ on('input', 'input.flt', (el) => {
 	display: flex
 	flex-direction: column
 	gap: 1.1rem
+	min-width: 0
+	overflow: hidden
 	padding: 1.25rem
 }
 .kpi-card.off: opacity: .6
@@ -750,10 +752,12 @@ on('input', 'input.flt', (el) => {
 .kpi-link {
 	color: inherit
 	display: flex
+	min-width: 0
 	text-decoration: none
 }
 .kpi-link .kpi-card {
 	flex: 1
+	min-width: 0
 	transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease
 }
 .kpi-link:hover .kpi-card {
