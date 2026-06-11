@@ -23,6 +23,8 @@
         "ext-sodium": "Encryption in the security resource",
         "ext-gd": "Icon sprite builder (build config key: icons)"
     },
+    "minimum-stability": "RC",
+    "prefer-stable": true,
     "config": {
         "sort-packages": true
     }
