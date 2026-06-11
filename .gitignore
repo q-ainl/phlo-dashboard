@@ -36,3 +36,11 @@ www/q/
 *.tmp
 .DS_Store
 data/fleet/
+
+# SQLite databases
+data/*.db
+data/*.sqlite
+
+# Composer
+/vendor/
+composer.lock

@@ -1,0 +1,29 @@
+{
+    "name": "phlo/dashboard",
+    "description": "Phlo Dashboard: admin and monitoring for the Phlo stack. Fleet monitoring, notifications, WhatsApp, subscriptions and an Adminer-like database admin (MySQL + SQLite).",
+    "type": "project",
+    "license": "MIT",
+    "keywords": ["phlo", "dashboard", "admin", "monitoring", "frankenphp", "database", "adminer"],
+    "homepage": "https://github.com/q-ainl/phlo-dashboard",
+    "authors": [
+        {
+            "name": "Jordi Boerman",
+            "email": "j@rdi.nu"
+        }
+    ],
+    "require": {
+        "php": ">=8.3",
+        "ext-pdo": "*",
+        "phlo/tech": "^1.0",
+        "phlo/cms": "^1.0"
+    },
+    "suggest": {
+        "ext-pdo_mysql": "MySQL connections (DB resources, dbadmin module)",
+        "ext-pdo_sqlite": "SQLite connections (dbadmin module)",
+        "ext-sodium": "Encryption in the security resource",
+        "ext-gd": "Icon sprite builder (build config key: icons)"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}

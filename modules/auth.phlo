@@ -13,8 +13,8 @@ static verifyIni($user, $pass){
 	return $u !== void && $p !== void && hash_equals($u, (string)$user) && hash_equals($p, (string)$pass)
 }
 
-# Federatie (gegate op [fleet] master in creds): authenticeer een user tegen de centrale hub. Tekent
-# time.auth.user.module met het gedeelde fleet-secret; de master checkt wachtwoord + canServer + canModule($module).
+# Federation (gated on [fleet] master in creds): authenticate a user against the central hub. Signs
+# time.auth.user.module with the shared fleet secret; the master checks password + canServer + canModule($module).
 static fedAuth($user, $pass){
 	$cfg = %creds->fleet->master ?? null
 	if (!$cfg) return null
@@ -41,7 +41,7 @@ static user {
 
 static moduleFor($path){
 	$seg = explode('/', trim((string)$path, '/'))[0] ?? void
-	return ['users' => 'user', 'visitors' => 'visitor', 'domains' => 'domain', 'sites' => 'site', 'whatsapp' => 'whatsapp', 'overview' => 'overview', 'node' => 'overview', 'errors' => 'overview', 'messages' => 'message', 'subscriptions' => 'subscription'][$seg] ?? null
+	return ['users' => 'user', 'visitors' => 'visitor', 'domains' => 'domain', 'sites' => 'site', 'whatsapp' => 'whatsapp', 'overview' => 'overview', 'node' => 'overview', 'errors' => 'overview', 'messages' => 'message', 'subscriptions' => 'subscription', 'dbadmin' => 'dbadmin'][$seg] ?? null
 }
 
 static allows($path){
@@ -49,7 +49,7 @@ static allows($path){
 	if (!$mod) return true
 	$u = static::user()
 	if (!$u) return false
-	if (in_array($mod, ['user', 'visitor', 'domain', 'site', 'whatsapp', 'subscription']) && !$u->isAdmin) return false
+	if (in_array($mod, ['user', 'visitor', 'domain', 'site', 'whatsapp', 'subscription', 'dbadmin']) && !$u->isAdmin) return false
 	return $u->canModule($mod)
 }
 
@@ -66,7 +66,7 @@ static themeCss {
 }
 
 static home {
-	# Node-lokale landing-module (constante via www/app.php, bv. `landing: 'scanlog'`); anders het CMS-dashboard.
+	# Node-local landing module (constant via www/app.php, e.g. `landing: 'overview'`); otherwise the CMS dashboard.
 	if (defined('landing') && phlo_exists(landing)){
 		$mod = landing
 		%app->active = $mod
@@ -82,25 +82,25 @@ static check {
 	unset(%session->user)
 	unset(%session->name)
 	unset(%session->fed)
-	return view(phlo('auth')->loginPage, 'Inloggen', css: static::themeCss())
+	return view(phlo('auth')->loginPage, 'Login', css: static::themeCss())
 }
 
 static logout {
 	unset(%session->user)
 	unset(%session->name)
 	unset(%session->fed)
-	return view(phlo('auth')->loginPage, 'Inloggen', css: static::themeCss())
+	return view(phlo('auth')->loginPage, 'Login', css: static::themeCss())
 }
 
 route both GET login {
 	if (static::authed() && %req->async) return static::home()
-	return view($this->loginPage, 'Inloggen', css: static::themeCss())
+	return view($this->loginPage, 'Login', css: static::themeCss())
 }
 
 route async POST login {
 	$email = trim((string)(%payload->email ?? %payload->username ?? void))
 	$pass = trim((string)(%payload->password ?? void))
-	if (!$email || !$pass) return apply(inner: ['#loginError' => tag('span', 'Vul e-mailadres en wachtwoord in', class: 'login-err')])
+	if (!$email || !$pass) return apply(inner: ['#loginError' => tag('span', 'Enter email and password', class: 'login-err')])
 	if (phlo_exists('user')){
 		try {
 			if ($u = user::verify($email, $pass)){
@@ -124,7 +124,7 @@ route async POST login {
 		%session->fed = 1
 		return static::home()
 	}
-	return apply(inner: ['#loginError' => tag('span', 'Onbekende combinatie van e-mailadres en wachtwoord', class: 'login-err')])
+	return apply(inner: ['#loginError' => tag('span', 'Unknown combination of email and password', class: 'login-err')])
 }
 
 route both GET logout => auth::logout()
@@ -133,17 +133,17 @@ view loginPage:
 <div.login-page>
 	<form.async.login-box method=post action="/login">
 		<h1.login-title>Dashboard</h1>
-		<p.login-sub>Log in om door te gaan</p>
+		<p.login-sub>Log in to continue</p>
 		<label.login-field>
-			<span>E-mail of gebruikersnaam</span>
+			<span>Email or username</span>
 			<input name=email type=text autocomplete=username required autofocus>
 		</label>
 		<label.login-field>
-			<span>Wachtwoord</span>
+			<span>Password</span>
 			<input name=password type=password autocomplete=current-password required>
 		</label>
 		<div#loginError></div>
-		<button.login-btn type=submit>Inloggen</button>
+		<button.login-btn type=submit>Login</button>
 	</form>
 </div>
 

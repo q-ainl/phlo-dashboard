@@ -1,5 +1,5 @@
 @ extends: model
-@ summary: Control-dashboard gebruiker - multi-user + rollen + rechten op servers/subdashboards.
+@ summary: Control dashboard user with multi-user setup, roles and permissions on servers/subdashboards.
 
 view: $this->displayName
 
@@ -9,8 +9,8 @@ static objValidate = true
 
 prop displayName => $this->name ?: $this->email
 
-# Beschikbare modules waarop een (gescopede) user rechten kan krijgen - fleet-breed.
-static moduleOptions => ['overview', 'visitor', 'domain', 'site', 'whatsapp', 'message', 'subscription', 'user', 'scanlog']
+# Available modules a (scoped) user can be granted permissions on, fleet-wide.
+static moduleOptions => ['overview', 'visitor', 'domain', 'site', 'whatsapp', 'message', 'subscription', 'user']
 prop serverIds => array_filter(array_map('trim', explode(',', (string)$this->allowed_servers)))
 prop moduleIds => array_filter(array_map('trim', explode(',', (string)$this->allowed_modules)))
 prop isAdmin => $this->role === 'admin'
@@ -29,7 +29,7 @@ static hash($password) => password_hash(trim((string)$password), PASSWORD_BCRYPT
 
 static seed($name, $email, $password, $role = 'user', $servers = '', $modules = ''){
 	$email = trim((string)$email)
-	if (user::record(email: $email)) return obj(ok: false, error: 'e-mail bestaat al')
+	if (user::record(email: $email)) return obj(ok: false, error: 'email already exists')
 	$id = token(10)
 	user::create(
 		id: $id,
@@ -66,55 +66,55 @@ static schema => arr (
 	),
 	name: field (
 		type: 'text',
-		title: 'Naam',
+		title: 'Name',
 		length: 100,
 		required: true,
 		search: true,
 	),
 	email: field (
 		type: 'email',
-		title: 'E-mail',
+		title: 'Email',
 		required: true,
 		search: true,
 	),
 	password: field (
 		type: 'password',
-		title: 'Wachtwoord',
+		title: 'Password',
 		required: false,
 	),
 	role: field (
 		type: 'select',
-		title: 'Rol',
+		title: 'Role',
 		options: ['admin', 'user'],
 		default: 'user',
 	),
 	allowed_servers: field (
 		type: 'multiselect',
-		title: 'Servers (geen = admin: alle)',
+		title: 'Servers (none = admin: all)',
 		options: fleet::nodes(),
 		length: 255,
 		list: false,
 	),
 	allowed_modules: field (
 		type: 'multiselect',
-		title: 'Modules (geen = alle)',
+		title: 'Modules (none = all)',
 		options: user::moduleOptions(),
 		length: 255,
 		list: false,
 	),
 	active: field (
 		type: 'bool',
-		title: 'Actief',
-		true: 'Aan',
-		false: 'Uit',
+		title: 'Active',
+		true: 'On',
+		false: 'Off',
 	),
 	created: field (
 		type: 'datetime',
-		title: 'Aangemaakt',
+		title: 'Created',
 		list: false,
 	),
 	changed: field (
 		type: 'datetime',
-		title: 'Gewijzigd',
+		title: 'Changed',
 	),
 )

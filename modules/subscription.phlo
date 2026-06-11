@@ -1,6 +1,6 @@
 @ extends: model
 @ requires: HTTP
-@ summary: Abonnementen - een user abonneert op (server, event) en krijgt nieuwe meldingen proactief geleverd (dashboard-inbox is altijd al gescoped; whatsapp = proactieve push). dispatch() draait bij elke nieuwe melding.
+@ summary: Subscriptions. A user subscribes to (server, event) and gets new notifications delivered proactively (dashboard inbox is always already scoped; whatsapp = proactive push). dispatch() runs on every new notification.
 
 view: $this->label
 
@@ -31,9 +31,10 @@ static sendWhatsapp($chatId, $message){
 	$secret = (string)($c->secret ?? void)
 	if ($url === void || $secret === void) return
 	$emoji = message::emoji((string)$message->type)
+	$label = message::label((string)$message->type)
 	$src = fleet::label((string)$message->server).(trim((string)$message->host) !== '' ? ' / '.$message->host : void)
 	$body = trim((string)$message->body)
-	$text = '*'.(string)$message->title.' '.$emoji.'*'.($body !== '' ? lf.$body : void).lf.$src
+	$text = '*'.$emoji.' '.$label.' · '.(string)$message->title.'*'.($body !== '' ? lf.$body : void).lf.$src
 	try {
 		HTTP(rtrim($url, '/').'/text', ['secret: '.$secret], true, ['to' => $chatId, 'text' => $text])
 	}
@@ -42,12 +43,12 @@ static sendWhatsapp($chatId, $message){
 
 static schema => arr (
 	id: field (type: 'token', length: 10, title: 'ID', list: false, record: false),
-	user_id: field (type: 'parent', obj: 'user', title: 'Gebruiker', length: 10, required: true),
+	user_id: field (type: 'parent', obj: 'user', title: 'User', length: 10, required: true),
 	server: field (type: 'select', title: 'Server', options: array_merge(['*'], fleet::nodes()), length: 40, default: '*'),
 	event: field (type: 'select', title: 'Event', options: ['*', 'error', 'order', 'payment', 'user'], length: 40, default: '*'),
-	channel: field (type: 'select', title: 'Kanaal', options: ['whatsapp', 'dashboard'], default: 'whatsapp'),
+	channel: field (type: 'select', title: 'Channel', options: ['whatsapp', 'dashboard'], default: 'whatsapp'),
 	target: field (type: 'text', title: 'WhatsApp chatId', length: 60, list: false),
-	active: field (type: 'bool', title: 'Actief', true: 'Aan', false: 'Uit'),
-	created: field (type: 'datetime', title: 'Aangemaakt', list: false),
-	changed: field (type: 'datetime', title: 'Gewijzigd'),
+	active: field (type: 'bool', title: 'Active', true: 'On', false: 'Off'),
+	created: field (type: 'datetime', title: 'Created', list: false),
+	changed: field (type: 'datetime', title: 'Changed'),
 )

@@ -321,14 +321,14 @@ onExist('#fleet-graph', canvas => {
 		return found
 	}
 	const pct = (u, t) => t > 0 ? Math.round(u / t * 100) + '%' : ''
-	const fmtUp = s => s >= 86400 ? Math.floor(s/86400) + 'd ' + Math.floor((s%86400)/3600) + 'u' : s >= 3600 ? Math.floor(s/3600) + 'u ' + Math.floor((s%3600)/60) + 'm' : Math.floor(s/60) + 'm'
+	const fmtUp = s => s >= 86400 ? Math.floor(s/86400) + 'd ' + Math.floor((s%86400)/3600) + 'h' : s >= 3600 ? Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm' : Math.floor(s/60) + 'm'
 	const row = (k, v) => v === '' || v == null ? '' : `<div class="fg-row"><span>${k}</span><b>${v}</b></div>`
 	const bad = v => `<span class="fg-bad">${v}</span>`
 	const buildInfo = n => {
-		if (n.type === 'hub') return `<header class="fg-ih"><span class="fg-dot fg-dot--server"></span><h2>Fleet</h2></header>` + row('Servers', n.servers) + row('Hosts', n.hosts) + row('Bezoekers', n.vis) + row('Errors', n.err ? bad(n.err) : 0)
-		if (n.type === 'server') return `<header class="fg-ih"><span class="fg-dot fg-dot--server"></span><h2>${n.label}</h2></header>` + row('Server', n.server) + row('Phlo', n.phlo) + row('Hosts', n.hosts) + row('Bezoekers', n.vis) + row('Errors', n.err ? bad(n.err) : 0) + row('Load', n.cpus ? n.load.toFixed(2) + ' / ' + n.cpus : n.load.toFixed(2)) + row('Geheugen', pct(n.memUsed, n.memTotal)) + row('Schijf', pct(n.diskUsed, n.diskTotal)) + row('Uptime', n.uptime ? fmtUp(n.uptime) : '') + `<div class="fg-acts"><a class="async" href="/node/${n.label}">Node-detail</a></div>`
+		if (n.type === 'hub') return `<header class="fg-ih"><span class="fg-dot fg-dot--server"></span><h2>Fleet</h2></header>` + row('Servers', n.servers) + row('Hosts', n.hosts) + row('Visitors', n.vis) + row('Errors', n.err ? bad(n.err) : 0)
+		if (n.type === 'server') return `<header class="fg-ih"><span class="fg-dot fg-dot--server"></span><h2>${n.label}</h2></header>` + row('Server', n.server) + row('Phlo', n.phlo) + row('Hosts', n.hosts) + row('Visitors', n.vis) + row('Errors', n.err ? bad(n.err) : 0) + row('Load', n.cpus ? n.load.toFixed(2) + ' / ' + n.cpus : n.load.toFixed(2)) + row('Memory', pct(n.memUsed, n.memTotal)) + row('Disk', pct(n.diskUsed, n.diskTotal)) + row('Uptime', n.uptime ? fmtUp(n.uptime) : '') + `<div class="fg-acts"><a class="async" href="/node/${n.label}">Node detail</a></div>`
 		const st = n.code >= 200 && n.code < 400 ? `<span class="fg-ok">${n.code}</span>` : bad(n.code || '-')
-		return `<header class="fg-ih"><span class="fg-dot fg-dot--${n.env}"></span><h2>${n.label}</h2></header>` + row('Server', n.node) + row('App', n.app) + row('Omgeving', n.env) + row('Status', st + (n.ms ? ` · ${n.ms}ms` : '')) + row('Bezoekers', n.vis) + row('Errors', n.err ? bad(n.err) : 0) + row('Meldingen', n.notif || 0) + (n.aliases && n.aliases.length ? row('Aliassen', n.aliases.join('<br>')) : '') + `<div class="fg-acts"><a href="https://${n.host}/" target="_blank" rel="noopener">Open site ↗</a><a class="async" href="/errors/${n.node}/${n.app}">Errors</a></div>`
+		return `<header class="fg-ih"><span class="fg-dot fg-dot--${n.env}"></span><h2>${n.label}</h2></header>` + row('Server', n.node) + row('App', n.app) + row('Environment', n.env) + row('Status', st + (n.ms ? ` · ${n.ms}ms` : '')) + row('Visitors', n.vis) + row('Errors', n.err ? bad(n.err) : 0) + row('Notifications', n.notif || 0) + (n.aliases && n.aliases.length ? row('Aliases', n.aliases.join('<br>')) : '') + `<div class="fg-acts"><a href="https://${n.host}/" target="_blank" rel="noopener">Open site ↗</a><a class="async" href="/errors/${n.node}/${n.app}">Errors</a></div>`
 	}
 	const showInfo = n => {
 		if (!n){

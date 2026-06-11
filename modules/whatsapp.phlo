@@ -1,4 +1,4 @@
-@ summary: WhatsApp-UI - overzicht van alle engine-instances over de hele vloot (uit de fleet-feed)
+@ summary: WhatsApp UI. Overview of all engine instances across the whole fleet (from the fleet feed)
 
 route both GET whatsapp {
 	%app->active = 'whatsapp'
@@ -21,17 +21,17 @@ method grid {
 			if ($ready){
 				$meta .= tag('div', overview::icon('clock', 13, 'muted').tag('span', age_human((int)($inst['uptime'] ?? 0))), class: 'wa-meta')
 				$wh = (bool)($inst['webhook'] ?? false)
-				$meta .= tag('div', overview::icon($wh ? 'check' : 'alert', 13, $wh ? 'emerald' : 'error').tag('span', $wh ? 'webhook ok' : 'geen webhook'), class: 'wa-meta'.($wh ? void : ' bad'))
+				$meta .= tag('div', overview::icon($wh ? 'check' : 'alert', 13, $wh ? 'emerald' : 'error').tag('span', $wh ? 'webhook ok' : 'no webhook'), class: 'wa-meta'.($wh ? void : ' bad'))
 			}
-			elseif ($inst['qr'] ?? null) $meta .= tag('div', overview::icon('refresh', 13, 'warn').tag('span', 'scan QR om te koppelen'), class: 'wa-meta')
+			elseif ($inst['qr'] ?? null) $meta .= tag('div', overview::icon('refresh', 13, 'warn').tag('span', 'scan QR to link'), class: 'wa-meta')
 			$host = $node === 'local' ? %req->host : (parse_url((string)(fleet::peers()?->$node?->url ?? void), PHP_URL_HOST) ?: $node)
-			$send = tag('div', tag('code', $host.'/api/wa/'.$inst['instance']), class: 'wa-url', title: 'Stuur-endpoint (POST + secret)')
+			$send = tag('div', tag('code', $host.'/api/wa/'.$inst['instance']), class: 'wa-url', title: 'Send endpoint (POST + secret)')
 			$cards .= tag('div', $head.$badge.$meta.$send, class: 'wa-card'.($ready ? ' on' : ''))
 		}
 		$head = tag('h2', overview::icon('server', 18, 'blue').tag('span', $feed['label'] ?? $node), class: 'wa-server')
 		$out .= tag('section', $head.tag('div', $cards, class: 'wa-grid'), class: 'wa-block')
 	}
-	return $out ?: tag('p', 'Geen WhatsApp-engines gevonden.')
+	return $out ?: tag('p', 'No WhatsApp engines found.')
 }
 
 <style>

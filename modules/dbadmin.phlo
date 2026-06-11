@@ -1,0 +1,2170 @@
+@ extends: DB
+@ summary: Adminer-like database admin for MySQL (per-session login) and SQLite (.db files from data/). Browse, structure/schema management, rows, SQL console, import/export. Admin-only.
+
+# MySQL connection (self): per-session creds, no dbname; queries qualify `db`.`table`. SQLite goes through the Phlo SQLite resource (static::db()).
+prop PDO => dbadmin::connectMysql(static::creds())
+
+static connectMysql($c){
+	$parts = explode(':', trim((string)($c['host'] ?? void)) ?: 'localhost', 2)
+	$port = (int)($parts[1] ?? 0)
+	$dsn = 'mysql:host='.$parts[0].($port ? ';port='.$port : void).';charset=utf8mb4'
+	return new \PDO($dsn, (string)($c['user'] ?? void), (string)($c['pass'] ?? void), [\Pdo\Mysql::ATTR_MULTI_STATEMENTS => false, \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION, \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC, \PDO::ATTR_TIMEOUT => 3])
+}
+
+static driver => (string)(static::creds()['driver'] ?? 'mysql')
+
+static isSqlite => static::driver() === 'sqlite'
+
+# Active DB instance: MySQL = self; SQLite = the Phlo SQLite resource (used, not modified).
+static db {
+	if (static::isSqlite()) return phlo('SQLite', (string)(static::creds()['file'] ?? void))
+	return %dbadmin
+}
+
+static dbh {
+	if (static::isSqlite()) return phlo('SQLite', (string)(static::creds()['file'] ?? void))->PDO
+	return %dbadmin->PDO
+}
+
+# .db/.sqlite files in the data/ folder (basename => full path).
+static dataFiles {
+	$out = []
+	foreach (array_merge(glob(data.'*.db') ?: [], glob(data.'*.sqlite') ?: []) AS $f) $out[basename($f)] = $f
+	return $out
+}
+
+static guard => (bool)(auth::user()?->isAdmin)
+
+static connected => (bool)(%session->dbadmin ?? null)
+
+static creds => (array)(%session->dbadmin ?? [])
+
+static q($sql, ...$args){
+	$pdo = static::dbh()
+	if (!$args) return $pdo->query($sql)
+	$stmt = $pdo->prepare($sql)
+	$stmt->execute(array_values($args))
+	return $stmt
+}
+
+static all($sql, ...$args) => static::q($sql, ...$args)->fetchAll(\PDO::FETCH_ASSOC)
+
+# Identifiers can't be prepared params: validate + backticks.
+static ident($name){
+	if (!regex('/^[A-Za-z0-9_$]+$/', (string)$name)) error('Invalid database, table or column name', 400)
+	return bt.$name.bt
+}
+
+# SQLite: one file = one database, tables without db prefix. MySQL: `db`.`table`.
+static rel($db, $table){
+	if (static::isSqlite()) return static::ident($table)
+	return static::ident($db).dot.static::ident($table)
+}
+
+static dbs {
+	if (static::isSqlite()) return [(string)(static::creds()['name'] ?? 'sqlite')]
+	return array_column(static::all('SHOW DATABASES'), 'Database')
+}
+
+# Normalized to MySQL-style keys (Name/Rows/Engine/Data_length/Index_length) so views don't branch.
+static tables($db){
+	if (static::isSqlite()){
+		$out = []
+		foreach (static::all("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name") AS $r){
+			$name = (string)$r['name']
+			$rows = (int)static::q('SELECT COUNT(*) FROM '.static::ident($name))->fetchColumn()
+			$out[] = ['Name' => $name, 'Rows' => $rows, 'Engine' => 'SQLite', 'Data_length' => 0, 'Index_length' => 0]
+		}
+		return $out
+	}
+	return static::all('SHOW TABLE STATUS FROM '.static::ident($db))
+}
+
+static checkTable($db, $table){
+	in_array($table, array_column(static::tables($db), 'Name')) || error('Unknown table', 404)
+	return true
+}
+
+# Normalized to SHOW FULL COLUMNS keys (Field/Type/Null/Key/Default/Extra/Collation/Comment).
+static columns($db, $table){
+	if (static::isSqlite()){
+		$out = []
+		foreach (static::all('PRAGMA table_info('.static::ident($table).')') AS $r){
+			$type = (string)$r['type']
+			$isPk = (int)$r['pk'] > 0
+			$auto = $isPk && strcasecmp(trim($type), 'INTEGER') === 0
+			$out[] = ['Field' => $r['name'], 'Type' => $type, 'Null' => (int)$r['notnull'] ? 'NO' : 'YES', 'Key' => $isPk ? 'PRI' : void, 'Default' => $r['dflt_value'], 'Extra' => $auto ? 'auto_increment' : void, 'Collation' => null, 'Comment' => void]
+		}
+		return $out
+	}
+	return static::all('SHOW FULL COLUMNS FROM '.static::rel($db, $table))
+}
+
+# Normalized to SHOW INDEX keys (Key_name/Non_unique/Column_name/Index_type).
+static indexes($db, $table){
+	if (static::isSqlite()){
+		$out = []
+		foreach (static::all('PRAGMA table_info('.static::ident($table).')') AS $r) if ((int)$r['pk']) $out[] = ['Key_name' => 'PRIMARY', 'Non_unique' => 0, 'Column_name' => $r['name'], 'Index_type' => 'PRIMARY']
+		foreach (static::all('PRAGMA index_list('.static::ident($table).')') AS $i){
+			$iname = (string)$i['name']
+			foreach (static::all('PRAGMA index_info('.static::ident($iname).')') AS $c) $out[] = ['Key_name' => $iname, 'Non_unique' => (int)$i['unique'] ? 0 : 1, 'Column_name' => $c['name'], 'Index_type' => 'INDEX']
+		}
+		return $out
+	}
+	return static::all('SHOW INDEX FROM '.static::rel($db, $table))
+}
+
+static pk($db, $table) => array_values(array_column(array_filter(static::columns($db, $table), fn($c) => ($c['Key'] ?? void) === 'PRI'), 'Field'))
+
+static fks($db, $table){
+	if (static::isSqlite()){
+		$out = []
+		foreach (static::all('PRAGMA foreign_key_list('.static::ident($table).')') AS $f) $out[] = ['name' => 'fk'.$f['id'].'_'.$f['from'], 'col' => $f['from'], 'rdb' => (string)(static::creds()['name'] ?? 'sqlite'), 'rtable' => $f['table'], 'rcol' => $f['to']]
+		return $out
+	}
+	return static::all('SELECT k.CONSTRAINT_NAME name, k.COLUMN_NAME col, k.REFERENCED_TABLE_SCHEMA rdb, k.REFERENCED_TABLE_NAME rtable, k.REFERENCED_COLUMN_NAME rcol FROM information_schema.KEY_COLUMN_USAGE k WHERE k.TABLE_SCHEMA=? AND k.TABLE_NAME=? AND k.REFERENCED_TABLE_NAME IS NOT NULL ORDER BY k.CONSTRAINT_NAME', $db, $table)
+}
+
+static fkActions => ['RESTRICT' => 'RESTRICT', 'CASCADE' => 'CASCADE', 'SET NULL' => 'SET NULL', 'NO ACTION' => 'NO ACTION']
+
+static acct($user, $host) => %dbadmin->PDO->quote((string)$user).'@'.%dbadmin->PDO->quote((string)$host)
+
+static accountUrl($user, $host) => '/dbadmin/privilege'.qm.http_build_query(['user' => $user, 'host' => $host])
+
+static grants($user, $host) => static::q('SHOW GRANTS FOR '.static::acct($user, $host))->fetchAll(\PDO::FETCH_COLUMN)
+
+static privs => ['ALL' => 'ALL PRIVILEGES', 'SELECT' => 'SELECT', 'INSERT' => 'INSERT', 'UPDATE' => 'UPDATE', 'DELETE' => 'DELETE', 'CREATE' => 'CREATE', 'DROP' => 'DROP', 'ALTER' => 'ALTER', 'INDEX' => 'INDEX', 'REFERENCES' => 'REFERENCES', 'CREATE_VIEW' => 'CREATE VIEW', 'SHOW_VIEW' => 'SHOW VIEW', 'TRIGGER' => 'TRIGGER', 'EXECUTE' => 'EXECUTE', 'CREATE_ROUTINE' => 'CREATE ROUTINE', 'ALTER_ROUTINE' => 'ALTER ROUTINE', 'EVENT' => 'EVENT', 'LOCK_TABLES' => 'LOCK TABLES', 'CREATE_TMP' => 'CREATE TEMPORARY TABLES', 'SHOW_DATABASES' => 'SHOW DATABASES', 'PROCESS' => 'PROCESS', 'RELOAD' => 'RELOAD']
+
+static checkHost($host){
+	if (!regex('/^[A-Za-z0-9_.%:-]+$/', (string)$host)) error('Invalid host', 400)
+	return $host
+}
+
+static href(...$parts){
+	$out = '/dbadmin'
+	foreach ($parts AS $p) $out .= slash.rawurlencode((string)$p)
+	return $out
+}
+
+static qs($params) => ($f = array_filter($params, fn($v) => $v !== void && !is_null($v))) ? qm.http_build_query($f) : void
+
+static currentPath => %req->async ? %req->path.(($q = %req->qs) ? qm.$q : void) : null
+
+static pathSegs => array_values(array_filter(explode('/', (string)%req->path)))
+
+static currentDb {
+	$seg = static::pathSegs()
+	if (($seg[0] ?? null) !== 'dbadmin') return null
+	$a = $seg[1] ?? null
+	if (in_array($a, ['db', 'table', 'structure', 'row', 'export', 'sql', 'create', 'column', 'alter', 'search'])) return $seg[2] ?? null
+	return null
+}
+
+static currentTable {
+	$seg = static::pathSegs()
+	if (($seg[0] ?? null) !== 'dbadmin') return null
+	if (in_array($seg[1] ?? null, ['table', 'structure', 'row', 'export'])) return $seg[3] ?? null
+	return null
+}
+
+static subNav {
+	if (!static::guard() || !static::connected()) return []
+	$out = []
+	try {
+		$db = static::currentDb()
+		if (is_null($db)){
+			foreach (static::dbs() AS $d) $out[] = ['title' => $d, 'uri' => static::href('db', $d), 'active' => false]
+		}
+		else {
+			$out[] = ['title' => $db, 'uri' => static::href('db', $db), 'active' => false, 'icon' => static::isSqlite() ? '📄' : '🛢️', 'cls' => 'db-cur']
+			$cur = static::currentTable()
+			foreach (static::tables($db) AS $t){
+				$name = (string)$t['Name']
+				$out[] = ['title' => $name, 'uri' => static::href('table', $db, $name), 'active' => $name === $cur]
+			}
+		}
+	}
+	catch (\Throwable $e){
+		return []
+	}
+	return $out
+}
+
+static errorBox($msg) => tag('div', tag('strong', 'Database error').tag('p', esc((string)$msg)), class: 'db-errorbox')
+
+static head($title, $sub) => tag('header', tag('div', tag('h1', $title, class: 'dash-title').tag('p', $sub, class: 'dash-sub')), class: 'dash-head')
+
+static tableWrap($t) => tag('div', $t, class: 'db-scroll')
+
+static topbar($db = null, $table = null, $tail = null){
+	$c = static::creds()
+	$trail = tag('a', 'Databases', href: '/dbadmin', class: 'async')
+	$db && $trail .= tag('span', '›').tag('a', esc($db), href: static::href('db', $db), class: 'async')
+	$table && $trail .= tag('span', '›').tag('a', esc($table), href: static::href('table', $db, $table), class: 'async')
+	$tail && $trail .= tag('span', '›').tag('span', $tail)
+	$who = static::isSqlite() ? tag('span', '📄 '.esc((string)($c['name'] ?? 'sqlite')), class: 'db-who') : tag('span', esc(($c['user'] ?? '?').'@'.($c['host'] ?? '?')), class: 'db-who')
+	return tag('div', tag('div', $trail, class: 'db-crumbs').tag('div', $who.button('Close connection', type: 'button', data_post: 'dbadmin/logout', class: 'db-btn ghost'), class: 'db-conn'), class: 'db-topbar')
+}
+
+static loginView($error = void){
+	$err = tag('div', $error !== void ? tag('span', esc((string)$error), class: 'db-err') : void, id: 'dbLoginError')
+	$host = tag('label', tag('span', 'Server (host or host:port)').input(name: 'host', type: 'text', value: 'localhost', autocomplete: 'off'), class: 'db-field')
+	$user = tag('label', tag('span', 'User').input(name: 'user', type: 'text', autocomplete: 'off', required: true, autofocus: true), class: 'db-field')
+	$pass = tag('label', tag('span', 'Password').input(name: 'password', type: 'password', autocomplete: 'off'), class: 'db-field')
+	$form = tag('form', $host.$user.$pass.$err.button('Connect', type: 'submit', class: 'db-btn primary'), method: 'post', action: '/dbadmin/login', class: 'async db-login')
+	$mysqlBox = tag('div', tag('h2', '🛢️ MySQL-server', class: 'db-h2').$form, class: 'db-login-col')
+	$files = static::dataFiles()
+	$list = void
+	foreach ($files AS $name => $path) $list .= button('📄 '.esc($name).tag('span', size_human((int)@filesize($path), 1), class: 'db-file-size'), type: 'button', data_post: 'dbadmin/sqlite', data_file: $name, class: 'db-sqlite-item')
+	$sqliteBox = tag('div', tag('h2', '📄 SQLite file', class: 'db-h2').($list ? tag('div', $list, class: 'db-sqlite-list') : tag('p', 'No .db files in the data folder.', class: 'db-note')), class: 'db-login-col')
+	return tag('div', static::head('🛢️ Database', 'Connect to the MySQL server or open a SQLite file for this session').tag('div', $mysqlBox.$sqliteBox, class: 'db-login-grid'), class: 'dash')
+}
+
+static pickerView(){
+	$sqlite = static::isSqlite()
+	$stats = []
+	if (!$sqlite) foreach (static::all('SELECT TABLE_SCHEMA db, COUNT(*) tabellen, SUM(DATA_LENGTH + INDEX_LENGTH) bytes FROM information_schema.TABLES GROUP BY TABLE_SCHEMA') AS $r) $stats[(string)$r['db']] = $r
+	$rows = void
+	$dbs = static::dbs()
+	foreach ($dbs AS $db){
+		$s = $stats[$db] ?? null
+		$count = $sqlite ? count(static::tables($db)) : ($s ? (int)$s['tabellen'] : 0)
+		$cells = tag('td', tag('a', esc($db), href: static::href('db', $db), class: 'async db-name'))
+		$cells .= tag('td', $count, class: 'num')
+		$cells .= tag('td', $sqlite ? size_human((int)@filesize((string)(static::creds()['file'] ?? void)), 1) : ($s ? size_human((int)$s['bytes'], 1) : '-'), class: 'num')
+		$cells .= tag('td', tag('a', 'SQL', href: static::href('sql', $db), class: 'async db-btn mini'), class: 'db-acts')
+		$rows .= tag('tr', $cells)
+	}
+	$thead = tag('thead', tag('tr', tag('th', 'Database').tag('th', 'Tables', class: 'num').tag('th', 'Size', class: 'num').tag('th', void)))
+	$table = static::tableWrap(tag('table', $thead.tag('tbody', $rows), class: 'db-table'))
+	$bar = $sqlite ? void : tag('a', '🔑 Privileges', href: '/dbadmin/privileges', class: 'async db-btn')
+	$bar .= tag('a', '📊 '.($sqlite ? 'SQLite info' : 'Server status'), href: '/dbadmin/status', class: 'async db-btn')
+	$bar .= tag('a', '⌨️ SQL console', href: static::href('sql'), class: 'async db-btn')
+	$bar = tag('div', $bar, class: 'db-bar')
+	$create = $sqlite ? void : tag('h2', 'New database', class: 'db-h2').tag('form', tag('div', input(type: 'text', name: 'name', placeholder: 'database name', required: true, autocomplete: 'off', class: 'db-rename-input').button('＋ Create database', type: 'submit', class: 'db-btn primary'), class: 'db-bar'), method: 'post', action: '/dbadmin/createdatabase', class: 'async db-form')
+	return tag('div', static::head($sqlite ? '📄 SQLite' : '🛢️ Database', $sqlite ? esc((string)(static::creds()['name'] ?? '')) : count($dbs).' databases').static::topbar().$bar.$table.$create, class: 'dash')
+}
+
+static privilegesView(){
+	$rows = void
+	$users = static::all('SELECT User, Host FROM mysql.user ORDER BY User, Host')
+	foreach ($users AS $u){
+		$user = (string)$u['User']
+		$host = (string)$u['Host']
+		$name = ($user !== void ? esc($user) : tag('i', '(anonymous)')).tag('span', '@'.esc($host), class: 'db-host')
+		$cells = tag('td', tag('a', $name, href: static::accountUrl($user, $host), class: 'async db-name'))
+		$cells .= tag('td', tag('a', 'privileges', href: static::accountUrl($user, $host), class: 'async db-btn mini'), class: 'db-acts')
+		$rows .= tag('tr', $cells)
+	}
+	$table = static::tableWrap(tag('table', tag('thead', tag('tr', tag('th', 'User').tag('th', void))).tag('tbody', $rows), class: 'db-table'))
+	$fields = tag('label', tag('span', 'User').input(name: 'user', type: 'text', required: true, autocomplete: 'off'), class: 'db-field')
+	$fields .= tag('label', tag('span', 'Host').input(name: 'host', type: 'text', value: '%', autocomplete: 'off'), class: 'db-field')
+	$fields .= tag('label', tag('span', 'Password').input(name: 'password', type: 'password', autocomplete: 'new-password'), class: 'db-field')
+	$create = tag('form', tag('div', $fields, class: 'db-priv-row').tag('div', button('＋ Create user', type: 'submit', class: 'db-btn primary'), class: 'db-bar'), method: 'post', action: '/dbadmin/privilege/create', class: 'async db-form')
+	$out = static::head('🔑 Privileges', count($users).' accounts').static::topbar(null, null, 'privileges').$table
+	$out .= tag('h2', 'New user', class: 'db-h2').$create
+	return tag('div', $out, class: 'dash')
+}
+
+static privilegeView($user, $host){
+	$gr = void
+	foreach (static::grants($user, $host) AS $line){
+		$line = (string)$line
+		$pm = regex('/^GRANT (.+) ON (.+?) TO /i', $line)
+		$canRevoke = $pm && strtoupper(trim($pm[1])) !== 'USAGE'
+		$btn = $canRevoke ? button('Revoke', type: 'button', data_post: 'dbadmin/privilege/revoke', data_confirm: 'Revoke this privilege?', data_u: $user, data_h: $host, data_g: sha1($line), class: 'db-btn mini') : void
+		$gr .= tag('div', tag('code', esc($line)).$btn, class: 'db-grant')
+	}
+	$hidden = input(type: 'hidden', name: 'user', value: $user).input(type: 'hidden', name: 'host', value: $host)
+	$boxes = void
+	foreach (static::privs() AS $key => $label) $boxes .= tag('label', input(type: 'checkbox', name: 'priv_'.$key).tag('span', $label), class: 'db-priv-box')
+	$dbOpts = tag('option', '* (all databases)', value: '*')
+	foreach (static::dbs() AS $d) $dbOpts .= tag('option', esc($d), value: $d)
+	$scope = tag('label', tag('span', 'Database').select($dbOpts, name: 'db'), class: 'db-field')
+	$scope .= tag('label', tag('span', 'Table').input(name: 'table', type: 'text', value: '*'), class: 'db-field')
+	$scope .= tag('label', input(type: 'checkbox', name: 'grantopt').tag('span', 'WITH GRANT OPTION'), class: 'db-priv-box db-go')
+	$grant = tag('form', $hidden.tag('div', $boxes, class: 'db-priv-grid').tag('div', $scope, class: 'db-priv-row').tag('div', button('Grant privileges', type: 'submit', class: 'db-btn primary'), class: 'db-bar'), method: 'post', action: '/dbadmin/privilege/grant', class: 'async db-form')
+	$pass = tag('form', $hidden.tag('div', tag('label', tag('span', 'New password').input(name: 'password', type: 'password', required: true, autocomplete: 'new-password'), class: 'db-field'), class: 'db-priv-row').tag('div', button('Change password', type: 'submit', class: 'db-btn'), class: 'db-bar'), method: 'post', action: '/dbadmin/privilege/password', class: 'async db-form')
+	$drop = tag('div', button('🗑️ Delete user', type: 'button', data_post: 'dbadmin/privilege/drop', data_confirm: 'Permanently delete user '.$user.'@'.$host.'?', data_u: $user, data_h: $host, class: 'db-btn danger'), class: 'db-bar')
+	$title = ($user !== void ? esc($user) : '(anonymous)').tag('span', '@'.esc($host), class: 'db-host')
+	$out = static::head('🔑 '.$title, 'Account privileges').static::topbar(null, null, 'privileges')
+	$out .= tag('div', tag('a', '‹ All accounts', href: '/dbadmin/privileges', class: 'async db-btn'), class: 'db-bar')
+	$out .= tag('h2', 'Granted privileges', class: 'db-h2').($gr ?: tag('p', 'No privileges.', class: 'db-note'))
+	$out .= tag('h2', 'Grant privileges', class: 'db-h2').$grant
+	$out .= tag('h2', 'Password', class: 'db-h2').$pass
+	$out .= tag('h2', 'Delete', class: 'db-h2').$drop
+	return tag('div', $out, class: 'dash')
+}
+
+static tablesView($db){
+	$tables = static::tables($db)
+	$rows = void
+	foreach ($tables AS $t){
+		$name = (string)$t['Name']
+		$size = (int)($t['Data_length'] ?? 0) + (int)($t['Index_length'] ?? 0)
+		$acts = tag('a', 'structure', href: static::href('structure', $db, $name), class: 'async db-btn mini')
+		$acts .= tag('a', 'sql', href: static::href('export', $db, $name).'?format=sql', class: 'db-btn mini')
+		$acts .= tag('a', 'csv', href: static::href('export', $db, $name).'?format=csv', class: 'db-btn mini')
+		$cells = tag('td', tag('a', esc($name), href: static::href('table', $db, $name), class: 'async db-name'))
+		$cells .= tag('td', number_format((int)($t['Rows'] ?? 0), 0, ',', '.'), class: 'num')
+		$cells .= tag('td', esc((string)($t['Engine'] ?? '-')), class: 'muted')
+		$cells .= tag('td', size_human($size, 1), class: 'num')
+		$cells .= tag('td', $acts, class: 'db-acts')
+		$rows .= tag('tr', $cells)
+	}
+	$thead = tag('thead', tag('tr', tag('th', 'Table').tag('th', 'Rows ±', class: 'num').tag('th', 'Engine').tag('th', 'Size', class: 'num').tag('th', void)))
+	$bar = tag('a', '＋ New table', href: static::href('create', $db), class: 'async db-btn primary')
+	$bar .= tag('a', '🔍 Search', href: static::href('search', $db), class: 'async db-btn')
+	$bar .= tag('a', '⌨️ SQL console', href: static::href('sql', $db), class: 'async db-btn')
+	$bar .= tag('a', '⬇ Database (SQL)', href: static::href('export', $db), class: 'db-btn')
+	$bar = tag('div', $bar, class: 'db-bar')
+	$import = tag('form', tag('div', input(type: 'file', name: 'sqlfile', accept: '.sql,.txt', required: true, class: 'db-file').button('▶ Import', type: 'submit', class: 'db-btn'), class: 'db-bar').tag('p', 'Runs a .sql file on this database (statements split, in a transaction where possible).', class: 'db-note').tag('div', void, id: 'importResult'), method: 'post', action: static::href('import', $db), enctype: 'multipart/form-data', class: 'async db-form')
+	$danger = static::isSqlite() ? void : tag('div', tag('h2', 'Delete database', class: 'db-h2').static::confirmForm('/dbadmin/dropdatabase/'.rawurlencode($db), void, $db, 'Delete database “'.esc($db).'” and all its tables. Type “'.esc($db).'” to confirm:', 'Delete database'), class: 'db-danger')
+	return tag('div', static::head(($sqlite = static::isSqlite()) ? '📄 '.esc($db) : '🛢️ '.esc($db), count($tables).' tables').static::topbar($db).$bar.static::tableWrap(tag('table', $thead.tag('tbody', $rows), class: 'db-table')).tag('h2', 'Import SQL', class: 'db-h2').$import.$danger, class: 'dash')
+}
+
+static browseState($cols){
+	$g = %req->query
+	$q = trim((string)($g['q'] ?? void))
+	$sort = (string)($g['sort'] ?? void)
+	in_array($sort, array_column($cols, 'Field')) || $sort = void
+	$dir = strtoupper((string)($g['dir'] ?? 'ASC')) === 'DESC' ? 'DESC' : 'ASC'
+	$page = max(1, (int)($g['page'] ?? 1))
+	$fc = (string)($g['c'] ?? void)
+	in_array($fc, array_column($cols, 'Field')) || $fc = void
+	$fv = $fc !== void ? (string)($g['v'] ?? void) : void
+	$where = void
+	$args = []
+	if ($fc !== void){
+		$where = ' WHERE '.static::ident($fc).' = ?'
+		$args = [$fv]
+	}
+	elseif ($q !== void){
+		$parts = []
+		foreach ($cols AS $c){
+			if (!regex('/char|text|enum|set|int|dec|num|real|float|double/i', (string)$c['Type'])) continue
+			$parts[] = static::ident((string)$c['Field']).' LIKE ?'
+			$args[] = '%'.$q.'%'
+		}
+		$parts && $where = ' WHERE '.implode(' OR ', $parts)
+	}
+	return ['q' => $q, 'sort' => $sort, 'dir' => $dir, 'page' => $page, 'fc' => $fc, 'fv' => $fv, 'where' => $where, 'args' => $args]
+}
+
+static cell($v){
+	if (is_null($v)) return tag('i', 'NULL', class: 'db-null')
+	$v = (string)$v
+	if (!mb_check_encoding($v, 'UTF-8')) return tag('i', 'binary · '.size_human(strlen($v)), class: 'db-null')
+	if (mb_strlen($v) > 200) return tag('span', esc(mb_substr($v, 0, 200)).'…', title: mb_substr($v, 0, 500))
+	return esc($v)
+}
+
+static browseView($db, $table){
+	static::checkTable($db, $table)
+	$cols = static::columns($db, $table)
+	$pk = static::pk($db, $table)
+	$s = static::browseState($cols)
+	$per = 50
+	$total = (int)static::q('SELECT COUNT(*) FROM '.static::rel($db, $table).$s['where'], ...$s['args'])->fetchColumn()
+	$order = $s['sort'] !== void ? ' ORDER BY '.static::ident($s['sort']).space.$s['dir'] : ($pk ? ' ORDER BY '.static::ident($pk[0]) : void)
+	$rows = static::all('SELECT * FROM '.static::rel($db, $table).$s['where'].$order.' LIMIT '.$per.' OFFSET '.($per * ($s['page'] - 1)), ...$s['args'])
+	$fkMap = []
+	foreach (static::fks($db, $table) AS $fk) $fkMap[(string)$fk['col']] = $fk
+	$keep = ['q' => $s['q'], 'c' => $s['fc'], 'v' => $s['fv']]
+	$ths = void
+	foreach ($cols AS $c){
+		$f = (string)$c['Field']
+		$active = $s['sort'] === $f
+		$label = esc($f).(isset($fkMap[$f]) ? ' 🔗' : void).($active ? ($s['dir'] === 'ASC' ? ' ▲' : ' ▼') : void)
+		$ths .= tag('th', tag('a', $label, href: static::href('table', $db, $table).static::qs($keep + ['sort' => $f, 'dir' => $active && $s['dir'] === 'ASC' ? 'desc' : 'asc']), class: 'async'))
+	}
+	$pk && $ths .= tag('th', void)
+	$body = void
+	foreach ($rows AS $r){
+		$cells = void
+		foreach ($cols AS $c){
+			$f = (string)$c['Field']
+			$val = $r[$f] ?? null
+			$rendered = static::cell($val)
+			if (isset($fkMap[$f]) && !is_null($val)){
+				$fk = $fkMap[$f]
+				$rendered = tag('a', $rendered, href: static::href('table', (string)$fk['rdb'], (string)$fk['rtable']).qm.http_build_query(['c' => (string)$fk['rcol'], 'v' => (string)$val]), class: 'async db-fk-link', title: 'Go to '.$fk['rtable'].'.'.$fk['rcol'])
+			}
+			$cells .= tag('td', $rendered)
+		}
+		if ($pk){
+			$key = []
+			foreach ($pk AS $p) $key[$p] = (string)$r[$p]
+			$edit = tag('a', '✏️', href: static::href('row', $db, $table).qm.http_build_query($key), class: 'async db-act', title: 'Edit')
+			$del = button('🗑️', type: 'button', data_post: 'dbadmin/delete/'.rawurlencode($db).'/'.rawurlencode($table), data_confirm: 'Delete row?', data_key: http_build_query($key), class: 'db-act', title: 'Delete')
+			$cells .= tag('td', $edit.$del, class: 'db-acts')
+		}
+		$body .= tag('tr', $cells)
+	}
+	$search = tag('form', input(type: 'search', name: 'q', value: $s['q'], placeholder: 'Search…').($s['sort'] !== void ? input(type: 'hidden', name: 'sort', value: $s['sort']).input(type: 'hidden', name: 'dir', value: strtolower($s['dir'])) : void).button('Search', type: 'submit', class: 'db-btn'), class: 'db-search', data_path: 'dbadmin/table/'.rawurlencode($db).'/'.rawurlencode($table))
+	$bar = tag('a', '＋ New row', href: static::href('row', $db, $table), class: 'async db-btn primary')
+	$bar .= tag('a', 'Structure', href: static::href('structure', $db, $table), class: 'async db-btn')
+	$bar .= tag('a', '⌨️ SQL', href: static::href('sql', $db), class: 'async db-btn')
+	$bar .= tag('a', '⬇ SQL', href: static::href('export', $db, $table).'?format=sql', class: 'db-btn')
+	$bar .= tag('a', '⬇ CSV', href: static::href('export', $db, $table).'?format=csv', class: 'db-btn')
+	$s['fc'] !== void && $bar .= tag('a', '✕ Clear filter', href: static::href('table', $db, $table), class: 'async db-btn')
+	$bar = tag('div', $bar.$search, class: 'db-bar')
+	$notice = $pk ? void : tag('p', 'This table has no primary key. Edit and delete via the SQL console.', class: 'db-note')
+	$pager = void
+	$pages = max(1, (int)ceil($total / $per))
+	if ($pages > 1){
+		$mk = fn($p, $label) => tag('a', $label, href: static::href('table', $db, $table).static::qs($keep + ['sort' => $s['sort'], 'dir' => $s['sort'] !== void ? strtolower($s['dir']) : void, 'page' => $p > 1 ? $p : void]), class: 'async db-btn mini')
+		$pager = tag('div', ($s['page'] > 1 ? $mk($s['page'] - 1, '‹ previous') : void).tag('span', 'page '.$s['page'].' / '.$pages, class: 'db-pageinfo').($s['page'] < $pages ? $mk($s['page'] + 1, 'next ›') : void), class: 'db-pager')
+	}
+	$filterNote = $s['fc'] !== void ? ' (where '.esc($s['fc']).' = “'.esc((string)$s['fv']).'”'.($fkMap ? '' : '').')' : ($s['q'] !== void ? ' (filtered on “'.esc($s['q']).'”)' : void)
+	$sub = number_format($total, 0, ',', '.').' rows'.$filterNote
+	return tag('div', static::head('📋 '.esc($table), $sub).static::topbar($db, $table).$bar.$notice.static::tableWrap(tag('table', tag('thead', tag('tr', $ths)).tag('tbody', $body), class: 'db-table')).$pager, class: 'dash')
+}
+
+static fieldInput($c, $val){
+	$f = (string)$c['Field']
+	$type = (string)$c['Type']
+	if ($m = regex('/^enum\((.+)\)$/i', $type)){
+		$opts = void
+		foreach (regex_all("/'([^']*)'/", $m[1])[1] ?? [] AS $o) $opts .= tag('option', esc($o), value: $o, selected: (string)$val === $o ? true : null)
+		return select($opts, name: 'val_'.$f)
+	}
+	if (regex('/text|blob|json/i', $type)) return textarea(esc((string)$val), name: 'val_'.$f, rows: 5)
+	if (regex('/^(tiny|small|medium|big)?int|^decimal|^float|^double/i', $type)) return input(type: 'number', name: 'val_'.$f, value: (string)$val, step: 'any')
+	return input(type: 'text', name: 'val_'.$f, value: is_null($val) ? void : (string)$val, placeholder: $type)
+}
+
+static rowView($db, $table){
+	static::checkTable($db, $table)
+	$cols = static::columns($db, $table)
+	$pk = static::pk($db, $table)
+	$g = %req->query
+	$keys = []
+	foreach ($pk AS $p) isset($g[$p]) && $keys[$p] = (string)$g[$p]
+	$editing = $pk && count($keys) === count($pk)
+	$row = null
+	if ($editing){
+		$row = static::q('SELECT * FROM '.static::rel($db, $table).' WHERE '.loop($pk, fn($p) => static::ident($p).'=?', ' AND ').' LIMIT 1', ...array_values($keys))->fetch(\PDO::FETCH_ASSOC) ?: null
+		$row || error('Row not found', 404)
+	}
+	$fields = void
+	foreach ($cols AS $c){
+		$f = (string)$c['Field']
+		$val = $row[$f] ?? null
+		$auto = str_contains((string)($c['Extra'] ?? void), 'auto_increment')
+		$nullable = ($c['Null'] ?? void) === 'YES'
+		$nullOn = $editing ? is_null($val) : ($nullable && is_null($c['Default'] ?? null) && !$auto)
+		$nullBox = $nullable ? tag('label', input(type: 'checkbox', name: 'null_'.$f, checked: $nullOn ? true : null).tag('span', 'NULL'), class: 'db-null-toggle') : void
+		$label = tag('span', esc($f).($auto ? tag('em', ' auto') : void), class: 'db-flabel', title: (string)$c['Type'])
+		$fields .= tag('div', $label.tag('div', static::fieldInput($c, $val).$nullBox, class: 'db-fctl'), class: 'db-field-row')
+	}
+	$hidden = void
+	if ($editing) foreach ($keys AS $p => $v) $hidden .= input(type: 'hidden', name: 'pk_'.$p, value: $v)
+	$form = tag('form', $fields.$hidden.tag('div', button($editing ? 'Save' : 'Add', type: 'submit', class: 'db-btn primary').tag('a', 'Cancel', href: static::href('table', $db, $table), class: 'async db-btn ghost'), class: 'db-bar end'), method: 'post', action: static::href('row', $db, $table), class: 'async db-form')
+	return tag('div', static::head(($editing ? '✏️ ' : '＋ ').esc($table), $editing ? 'Edit row' : 'New row').static::topbar($db, $table, $editing ? 'editing' : 'new').$form, class: 'dash')
+}
+
+static sqlView($db = null){
+	$opts = tag('option', '- database -', value: void)
+	foreach (static::dbs() AS $d) $opts .= tag('option', esc($d), value: $d, selected: $d === $db ? true : null)
+	$form = tag('form', tag('div', select($opts, name: 'db').button('▶ Run', type: 'submit', class: 'db-btn primary'), class: 'db-bar').textarea(void, name: 'query', rows: 8, placeholder: 'SELECT * FROM …', spellcheck: 'false'), method: 'post', action: '/dbadmin/sql', class: 'async db-console')
+	$hint = tag('p', 'One statement at a time. SELECT results are capped at 500 rows.', class: 'db-note')
+	return tag('div', static::head('⌨️ SQL-console', 'Run a query'.($db ? ' op '.esc($db) : void)).static::topbar($db).$form.$hint.tag('div', void, id: 'sqlResult'), class: 'dash')
+}
+
+static structureView($db, $table){
+	static::checkTable($db, $table)
+	$cols = static::columns($db, $table)
+	$body = void
+	foreach ($cols AS $c){
+		$f = (string)$c['Field']
+		$cells = tag('td', tag('strong', esc($f)))
+		$cells .= tag('td', esc((string)$c['Type']), class: 'muted')
+		$cells .= tag('td', esc((string)($c['Collation'] ?? '-')), class: 'muted')
+		$cells .= tag('td', ($c['Null'] ?? void) === 'YES' ? 'NULL' : '-', class: 'muted')
+		$cells .= tag('td', is_null($c['Default'] ?? null) ? tag('i', 'NULL', class: 'db-null') : esc((string)$c['Default']))
+		$cells .= tag('td', esc(trim((string)($c['Key'] ?? void).space.(string)($c['Extra'] ?? void))))
+		$edit = tag('a', '✏️', href: static::href('column', $db, $table).qm.http_build_query(['col' => $f]), class: 'async db-act', title: 'Edit column')
+		$del = button('🗑️', type: 'button', data_post: 'dbadmin/dropcolumn/'.rawurlencode($db).'/'.rawurlencode($table), data_confirm: 'Delete column “'.$f.'”?', data_col: $f, class: 'db-act', title: 'Delete column')
+		$cells .= tag('td', $edit.$del, class: 'db-acts')
+		$body .= tag('tr', $cells)
+	}
+	$colsTable = static::tableWrap(tag('table', tag('thead', tag('tr', tag('th', 'Column').tag('th', 'Type').tag('th', 'Collation').tag('th', 'Null').tag('th', 'Default').tag('th', 'Key').tag('th', void))).tag('tbody', $body), class: 'db-table'))
+	$colBar = tag('a', '✎ Edit full structure', href: static::href('alter', $db, $table), class: 'async db-btn primary')
+	$colBar .= tag('a', '＋ Add column', href: static::href('column', $db, $table), class: 'async db-btn')
+	$colsTable .= tag('div', $colBar, class: 'db-bar')
+	$idx = []
+	foreach (static::indexes($db, $table) AS $i) $idx[(string)$i['Key_name']][] = $i
+	$ibody = void
+	foreach ($idx AS $name => $list){
+		$type = ($list[0]['Non_unique'] ?? 1) ? (string)($list[0]['Index_type'] ?? 'INDEX') : ($name === 'PRIMARY' ? 'PRIMARY' : 'UNIQUE')
+		$del = button('🗑️', type: 'button', data_post: 'dbadmin/dropindex/'.rawurlencode($db).'/'.rawurlencode($table), data_confirm: 'Delete index “'.$name.'”?', data_name: $name, class: 'db-act', title: 'Delete index')
+		$ibody .= tag('tr', tag('td', tag('strong', esc($name))).tag('td', esc($type), class: 'muted').tag('td', esc(implode(', ', array_column($list, 'Column_name')))).tag('td', $del, class: 'db-acts'))
+	}
+	$idxTable = $ibody ? static::tableWrap(tag('table', tag('thead', tag('tr', tag('th', 'Index').tag('th', 'Type').tag('th', 'Columns').tag('th', void))).tag('tbody', $ibody), class: 'db-table')) : tag('p', 'No indexes.', class: 'db-note')
+	$ixType = select(loop(static::isSqlite() ? ['INDEX', 'UNIQUE'] : ['INDEX', 'UNIQUE', 'FULLTEXT', 'PRIMARY'], fn($t) => tag('option', $t, value: $t), void), name: 'type')
+	$idxForm = tag('form', tag('div', input(type: 'text', name: 'name', placeholder: 'index name (empty = auto)', autocomplete: 'off', class: 'db-rename-input').$ixType.input(type: 'text', name: 'cols', placeholder: 'column1, column2', required: true, autocomplete: 'off', class: 'db-rename-input').button('Add index', type: 'submit', class: 'db-btn'), class: 'db-bar'), method: 'post', action: static::href('index', $db, $table), class: 'async db-form')
+	$bar = tag('a', '📋 Browse', href: static::href('table', $db, $table), class: 'async db-btn')
+	$bar .= tag('a', '⌨️ SQL', href: static::href('sql', $db), class: 'async db-btn')
+	$bar .= tag('a', '⬇ SQL', href: static::href('export', $db, $table).'?format=sql', class: 'db-btn')
+	$bar .= tag('a', '⬇ CSV', href: static::href('export', $db, $table).'?format=csv', class: 'db-btn')
+	$bar = tag('div', $bar, class: 'db-bar')
+	$rename = tag('form', input(type: 'text', name: 'newname', value: $table, autocomplete: 'off', class: 'db-rename-input').button('Rename', type: 'submit', class: 'db-btn'), method: 'post', action: static::href('rename', $db, $table), class: 'async db-bar')
+	$trunc = static::confirmForm(static::href('truncate', $db, $table), void, $table, 'Empty table (all rows removed). Type “'.esc($table).'” to confirm:', 'Empty')
+	$drop = static::confirmForm(static::href('drop', $db, $table), void, $table, 'Permanently delete table. Type “'.esc($table).'” to confirm:', 'Delete')
+	$fkBody = void
+	foreach (static::fks($db, $table) AS $fk){
+		$ref = esc((string)$fk['col']).' → '.esc((string)$fk['rdb'].'.'.$fk['rtable'].'.'.$fk['rcol'])
+		$del = button('🗑️', type: 'button', data_post: 'dbadmin/dropfk/'.rawurlencode($db).'/'.rawurlencode($table), data_confirm: 'Delete foreign key “'.$fk['name'].'”?', data_name: $fk['name'], class: 'db-act', title: 'Delete FK')
+		$fkBody .= tag('tr', tag('td', tag('strong', esc((string)$fk['name']))).tag('td', $ref, class: 'muted').tag('td', $del, class: 'db-acts'))
+	}
+	$fkTable = $fkBody ? static::tableWrap(tag('table', tag('thead', tag('tr', tag('th', 'Constraint').tag('th', 'Reference').tag('th', void))).tag('tbody', $fkBody), class: 'db-table')) : tag('p', 'No foreign keys.', class: 'db-note')
+	if (static::isSqlite()){
+		$fkForm = tag('p', 'Adding foreign keys in SQLite is not possible via ALTER (table rebuild required). Use the SQL console or the CREATE TABLE statement.', class: 'db-note')
+	}
+	else {
+		$colSel = select(loop($cols, fn($c) => tag('option', esc((string)$c['Field']), value: (string)$c['Field']), void), name: 'col')
+		$rdbSel = select(loop(static::dbs(), fn($d) => tag('option', esc($d), value: $d, selected: $d === $db ? true : null), void), name: 'rdb')
+		$actSel = fn($name) => select(loop(static::fkActions(), fn($l, $k) => tag('option', $l, value: $k, selected: $k === 'RESTRICT' ? true : null), void), name: $name)
+		$fkForm = tag('form', tag('div', $colSel.tag('span', '→', class: 'db-fk-arrow').$rdbSel.input(type: 'text', name: 'rtable', placeholder: 'ref. table', required: true, autocomplete: 'off', class: 'db-rename-input').input(type: 'text', name: 'rcol', placeholder: 'ref. column', required: true, autocomplete: 'off', class: 'db-rename-input'), class: 'db-bar').tag('div', tag('span', 'ON DELETE', class: 'db-fk-lbl').$actSel('ondelete').tag('span', 'ON UPDATE', class: 'db-fk-lbl').$actSel('onupdate').button('Add foreign key', type: 'submit', class: 'db-btn'), class: 'db-bar'), method: 'post', action: static::href('fk', $db, $table), class: 'async db-form')
+	}
+	$danger = tag('div', tag('h2', 'Rename table', class: 'db-h2').$rename.tag('h2', 'Empty table', class: 'db-h2').$trunc.tag('h2', 'Delete table', class: 'db-h2').$drop, class: 'db-danger')
+	return tag('div', static::head('🧱 '.esc($table), 'Structure').static::topbar($db, $table, 'structure').$bar.tag('h2', 'Columns', class: 'db-h2').$colsTable.tag('h2', 'Indexes', class: 'db-h2').$idxTable.$idxForm.tag('h2', 'Foreign keys', class: 'db-h2').$fkTable.$fkForm.$danger, class: 'dash')
+}
+
+static dumpCsv($db, $table){
+	$h = fopen('php://temp', 'w+')
+	fputcsv($h, array_column(static::columns($db, $table), 'Field'), comma, dq, void)
+	$offset = 0
+	while (true){
+		$rows = static::all('SELECT * FROM '.static::rel($db, $table).' LIMIT 1000 OFFSET '.$offset)
+		foreach ($rows AS $r) fputcsv($h, loop($r, fn($v) => (string)$v), comma, dq, void)
+		if (count($rows) < 1000) break
+		$offset += 1000
+	}
+	rewind($h)
+	return (string)stream_get_contents($h)
+}
+
+static dumpSql($db, $table){
+	$pdo = static::dbh()
+	$create = static::isSqlite() ? (string)(static::q("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", $table)->fetchColumn() ?: void) : (string)(static::all('SHOW CREATE TABLE '.static::rel($db, $table))[0]['Create Table'] ?? void)
+	$out = '-- Phlo Dashboard export · '.$db.dot.$table.' · '.date('Y-m-d H:i').lf
+	$out .= 'DROP TABLE IF EXISTS '.static::ident($table).semi.lf.$create.semi.lf.lf
+	$colSql = loop(array_column(static::columns($db, $table), 'Field'), fn($f) => static::ident($f), comma)
+	$offset = 0
+	while (true){
+		$rows = static::all('SELECT * FROM '.static::rel($db, $table).' LIMIT 1000 OFFSET '.$offset)
+		$values = []
+		foreach ($rows AS $r) $values[] = '('.loop($r, fn($v) => is_null($v) ? 'NULL' : $pdo->quote((string)$v), comma).')'
+		foreach (array_chunk($values, 100) AS $chunk) $out .= 'INSERT INTO '.static::ident($table).' ('.$colSql.') VALUES'.lf.implode(comma.lf, $chunk).semi.lf
+		if (count($rows) < 1000) break
+		$offset += 1000
+	}
+	return $out
+}
+
+static typeList => ['INT', 'INTEGER', 'BIGINT', 'TINYINT', 'SMALLINT', 'MEDIUMINT', 'DECIMAL', 'NUMERIC', 'FLOAT', 'DOUBLE', 'REAL', 'BOOLEAN', 'CHAR', 'VARCHAR', 'TINYTEXT', 'TEXT', 'MEDIUMTEXT', 'LONGTEXT', 'DATE', 'DATETIME', 'TIMESTAMP', 'TIME', 'YEAR', 'JSON', 'BLOB', 'ENUM', 'SET', 'BINARY', 'VARBINARY']
+
+static colType($type){
+	$t = strtoupper(trim((string)$type))
+	in_array($t, static::typeList()) || error('Invalid column type', 400)
+	return $t
+}
+
+static colLen($type, $len){
+	$len = trim((string)$len)
+	if ($len === void) return void
+	$t = strtoupper(trim((string)$type))
+	if (in_array($t, ['ENUM', 'SET'])){
+		$vals = array_filter(array_map('trim', explode(',', $len)))
+		if (!$vals) return void
+		return '('.loop($vals, fn($v) => static::dbh()->quote(trim($v, "'\"" )), comma).')'
+	}
+	if (!regex('/^[0-9]+(,[0-9]+)?$/', $len)) error('Invalid length/value', 400)
+	return '('.$len.')'
+}
+
+static columnDef($name, $type, $len, $nullable, $default, $auto){
+	$sql = static::ident($name).space.static::colType($type).static::colLen($type, $len)
+	$sql .= $nullable ? (static::isSqlite() ? void : ' NULL') : ' NOT NULL'
+	$d = trim((string)$default)
+	if ($d !== void) $sql .= (strcasecmp($d, 'CURRENT_TIMESTAMP') === 0) ? ' DEFAULT CURRENT_TIMESTAMP' : ' DEFAULT '.static::dbh()->quote($d)
+	elseif ($nullable && !static::isSqlite()) $sql .= ' DEFAULT NULL'
+	if ($auto && !static::isSqlite()) $sql .= ' AUTO_INCREMENT'
+	return $sql
+}
+
+static columnsFromPayload($p){
+	$defs = []
+	$pks = []
+	for ($i = 0; $i < 60; $i++){
+		$name = trim((string)($p['c'.$i.'_name'] ?? void))
+		if ($name === void) continue
+		$defs[] = static::columnDef($name, $p['c'.$i.'_type'] ?? 'INT', $p['c'.$i.'_len'] ?? void, isset($p['c'.$i.'_null']), $p['c'.$i.'_default'] ?? void, isset($p['c'.$i.'_auto']))
+		isset($p['c'.$i.'_pk']) && $pks[] = static::ident($name)
+	}
+	return ['defs' => $defs, 'pks' => $pks]
+}
+
+static typeSelect($name, $sel = null){
+	$opts = void
+	foreach (static::typeList() AS $t) $opts .= tag('option', $t, value: $t, selected: strtoupper((string)$sel) === $t ? true : null)
+	return select($opts, name: $name)
+}
+
+static columnFields($i, $col = null){
+	$type = strtoupper((string)($col['type'] ?? 'INT'))
+	$base = regex('/^([A-Z]+)/', $type)[1] ?? $type
+	$len = regex('/\((.+)\)/', $type)[1] ?? void
+	$n = input(type: 'text', name: 'c'.$i.'_name', value: (string)($col['name'] ?? void), placeholder: 'column name', autocomplete: 'off', class: 'db-col-name')
+	$t = static::typeSelect('c'.$i.'_type', $base)
+	$l = input(type: 'text', name: 'c'.$i.'_len', value: $len, placeholder: 'len/enum', autocomplete: 'off', class: 'db-col-len')
+	$d = input(type: 'text', name: 'c'.$i.'_default', value: (string)($col['default'] ?? void), placeholder: 'default', autocomplete: 'off', class: 'db-col-def')
+	$null = tag('label', input(type: 'checkbox', name: 'c'.$i.'_null', checked: ($col['null'] ?? false) ? true : null).tag('span', 'Null'), class: 'db-col-chk')
+	$auto = tag('label', input(type: 'checkbox', name: 'c'.$i.'_auto', checked: ($col['auto'] ?? false) ? true : null).tag('span', 'A.I.'), class: 'db-col-chk')
+	$pk = tag('label', input(type: 'checkbox', name: 'c'.$i.'_pk', checked: ($col['pk'] ?? false) ? true : null).tag('span', 'PK'), class: 'db-col-chk')
+	return $n.$t.$l.$d.$null.$auto.$pk
+}
+
+static columnRow($i, $col = null) => tag('div', static::columnFields($i, $col), class: 'db-col-row')
+
+static colRowSpec($c) => ['name' => $c['Field'], 'type' => $c['Type'], 'null' => ($c['Null'] ?? void) === 'YES', 'default' => $c['Default'], 'auto' => str_contains((string)($c['Extra'] ?? void), 'auto_increment'), 'pk' => ($c['Key'] ?? void) === 'PRI']
+
+static alterColumnRow($i, $col = null){
+	$ctrl = tag('span', button('↑', type: 'button', class: 'db-row-up', title: 'Up').button('↓', type: 'button', class: 'db-row-down', title: 'Down').button('✕', type: 'button', class: 'db-row-del', title: 'Delete'), class: 'db-col-ctrl')
+	$orig = input(type: 'hidden', name: 'c'.$i.'_orig', value: (string)($col['name'] ?? void))
+	return tag('div', tag('span', '⠿', class: 'db-col-grip').$ctrl.$orig.static::columnFields($i, $col), class: 'db-col-row', draggable: 'true')
+}
+
+static serverStatusView(){
+	if (static::isSqlite()){
+		$info = []
+		$info['SQLite version'] = (string)static::q('SELECT sqlite_version()')->fetchColumn()
+		$info['File'] = (string)(static::creds()['file'] ?? void)
+		$info['File size'] = size_human((int)@filesize((string)(static::creds()['file'] ?? void)), 1)
+		foreach (['page_size', 'page_count', 'encoding', 'journal_mode', 'auto_vacuum', 'foreign_keys'] AS $p){
+			try {
+				$info[$p] = (string)static::q('PRAGMA '.$p)->fetchColumn()
+			}
+			catch (\PDOException $e){
+			}
+		}
+		$rows = void
+		foreach ($info AS $k => $v) $rows .= tag('tr', tag('td', tag('strong', esc((string)$k))).tag('td', esc((string)$v), class: 'muted'))
+		$table = static::tableWrap(tag('table', tag('tbody', $rows), class: 'db-table'))
+		return tag('div', static::head('📊 SQLite info', 'File-based database').static::topbar().$table, class: 'dash')
+	}
+	$version = (string)static::q('SELECT VERSION()')->fetchColumn()
+	$status = []
+	foreach (static::all('SHOW GLOBAL STATUS') AS $r) $status[(string)$r['Variable_name']] = (string)$r['Value']
+	$uptime = (int)($status['Uptime'] ?? 0)
+	$head = static::head('📊 Server status', 'MySQL '.esc($version).' · uptime '.age_human($uptime))
+	$proc = void
+	try {
+		foreach (static::all('SHOW FULL PROCESSLIST') AS $p){
+			$kill = button('✕', type: 'button', data_post: 'dbadmin/kill', data_confirm: 'Kill process '.$p['Id'].'?', data_id: (string)$p['Id'], class: 'db-act', title: 'Kill')
+			$proc .= tag('tr', tag('td', esc((string)$p['Id'])).tag('td', esc((string)($p['User'] ?? ''))).tag('td', esc((string)($p['Host'] ?? '')), class: 'muted').tag('td', esc((string)($p['db'] ?? '')), class: 'muted').tag('td', esc((string)($p['Command'] ?? ''))).tag('td', esc((string)($p['Time'] ?? '')), class: 'num').tag('td', esc((string)($p['State'] ?? '')), class: 'muted').tag('td', esc(mb_strimwidth((string)($p['Info'] ?? ''), 0, 80, '…')), class: 'muted').tag('td', $kill, class: 'db-acts'))
+		}
+		$procTable = static::tableWrap(tag('table', tag('thead', tag('tr', tag('th', 'Id').tag('th', 'User').tag('th', 'Host').tag('th', 'DB').tag('th', 'Command').tag('th', 'Time', class: 'num').tag('th', 'State').tag('th', 'Info').tag('th', void))).tag('tbody', $proc), class: 'db-table'))
+	}
+	catch (\PDOException $e){
+		$procTable = static::errorBox($e->getMessage())
+	}
+	$keys = ['Uptime', 'Threads_connected', 'Threads_running', 'Connections', 'Aborted_connects', 'Questions', 'Queries', 'Slow_queries', 'Com_select', 'Com_insert', 'Com_update', 'Com_delete', 'Bytes_received', 'Bytes_sent', 'Innodb_rows_read', 'Innodb_buffer_pool_reads']
+	$kpi = void
+	foreach ($keys AS $k) isset($status[$k]) && $kpi .= tag('tr', tag('td', tag('strong', esc($k))).tag('td', number_format((int)$status[$k], 0, ',', '.'), class: 'num'))
+	$kpiTable = static::tableWrap(tag('table', tag('tbody', $kpi), class: 'db-table'))
+	$vars = void
+	foreach (static::all('SHOW VARIABLES') AS $r){
+		$name = (string)$r['Variable_name']
+		$vars .= tag('tr', tag('td', tag('strong', esc($name))).tag('td', esc(mb_strimwidth((string)$r['Value'], 0, 120, '…')), class: 'muted'), data_filter: strtolower($name))
+	}
+	$filter = input(type: 'search', placeholder: 'Filter variables…', autocomplete: 'off', class: 'flt db-rename-input')
+	$varTable = static::tableWrap(tag('table', tag('thead', tag('tr', tag('th', 'Variable').tag('th', 'Value'))).tag('tbody', $vars), class: 'db-table'))
+	return tag('div', $head.static::topbar().tag('h2', 'Processes', class: 'db-h2').$procTable.tag('h2', 'Key metrics', class: 'db-h2').$kpiTable.tag('h2', 'Variables', class: 'db-h2').tag('div', $filter, class: 'db-bar').$varTable, class: 'dash')
+}
+
+static searchView($db, $q = void){
+	$form = tag('form', tag('div', input(type: 'search', name: 'q', value: $q, placeholder: 'Search all tables…', autofocus: true, autocomplete: 'off').button('🔍 Search', type: 'submit', class: 'db-btn primary'), class: 'db-bar'), class: 'db-search db-form', data_path: 'dbadmin/search/'.rawurlencode($db))
+	$results = void
+	if ($q !== void){
+		$rows = void
+		$hits = 0
+		foreach (static::tables($db) AS $t){
+			$name = (string)$t['Name']
+			$parts = []
+			$args = []
+			foreach (static::columns($db, $name) AS $c){
+				if (!regex('/char|text|enum|set|int|dec|num|real|float|double|date|time|year/i', (string)$c['Type'])) continue
+				$parts[] = static::ident((string)$c['Field']).' LIKE ?'
+				$args[] = '%'.$q.'%'
+			}
+			if (!$parts) continue
+			try {
+				$n = (int)static::q('SELECT COUNT(*) FROM '.static::rel($db, $name).' WHERE '.implode(' OR ', $parts), ...$args)->fetchColumn()
+			}
+			catch (\PDOException $e){
+				continue
+			}
+			if ($n < 1) continue
+			$hits++
+			$rows .= tag('tr', tag('td', tag('a', esc($name), href: static::href('table', $db, $name).qm.http_build_query(['q' => $q]), class: 'async db-name')).tag('td', $n.' '.($n === 1 ? 'match' : 'matches'), class: 'num'))
+		}
+		$results = $rows ? tag('div', tag('p', $hits.' table(s) with matches for “'.esc($q).'”', class: 'db-note').static::tableWrap(tag('table', tag('thead', tag('tr', tag('th', 'Table').tag('th', 'Matches', class: 'num'))).tag('tbody', $rows), class: 'db-table'))) : tag('p', 'No matches for “'.esc($q).'”.', class: 'db-note')
+	}
+	return tag('div', static::head('🔍 Search '.esc($db), 'Find a value across all tables').static::topbar($db).$form.$results, class: 'dash')
+}
+
+static structureEditView($db, $table){
+	static::checkTable($db, $table)
+	$rows = void
+	$i = 0
+	foreach (static::columns($db, $table) AS $c){
+		$rows .= static::alterColumnRow($i, static::colRowSpec($c))
+		$i++
+	}
+	$form = tag('form', tag('div', static::alterColumnRow('IDX'), id: 'dbColTpl', class: 'db-col-tpl').tag('div', $rows, id: 'dbCols', class: 'db-cols-sortable').tag('div', button('＋ column', type: 'button', id: 'dbAddCol', class: 'db-btn').button('Save structure', type: 'submit', class: 'db-btn primary').tag('a', 'Cancel', href: static::href('structure', $db, $table), class: 'async db-btn ghost'), class: 'db-bar'), method: 'post', action: static::href('alter', $db, $table), class: 'async db-form')
+	$note = tag('p', static::isSqlite() ? 'Edit all columns at once. Reorder by dragging (⠿) or ↑/↓. SQLite rebuilds the table in a transaction; PK/AUTOINCREMENT via the PK checkboxes (INTEGER + PK = auto).' : 'Edit all columns at once. Reorder by dragging (⠿) or ↑/↓. Manage the primary key via the index section (PK checkboxes are ignored for MySQL).', class: 'db-note')
+	return tag('div', static::head('✎ '.esc($table), 'Edit structure').static::topbar($db, $table, 'edit structure').$note.$form, class: 'dash')
+}
+
+static createTableView($db){
+	$rows = void
+	for ($i = 0; $i < 5; $i++) $rows .= static::columnRow($i)
+	$form = tag('form', tag('div', tag('label', tag('span', 'Table name').input(type: 'text', name: 'table', required: true, autofocus: true, autocomplete: 'off'), class: 'db-field'), class: 'db-priv-row').tag('div', static::columnRow('IDX'), id: 'dbColTpl', class: 'db-col-tpl').tag('div', $rows, id: 'dbCols').tag('div', button('＋ column', type: 'button', id: 'dbAddCol', class: 'db-btn').button('Create table', type: 'submit', class: 'db-btn primary'), class: 'db-bar'), method: 'post', action: static::href('create', $db), class: 'async db-form')
+	return tag('div', static::head('＋ New table', 'in '.esc($db)).static::topbar($db, null, 'new table').$form, class: 'dash')
+}
+
+static colSpec($db, $table, $colName){
+	foreach (static::columns($db, $table) AS $c){
+		if ((string)$c['Field'] !== (string)$colName) continue
+		return ['name' => $c['Field'], 'type' => $c['Type'], 'null' => ($c['Null'] ?? void) === 'YES', 'default' => $c['Default'], 'auto' => str_contains((string)($c['Extra'] ?? void), 'auto_increment'), 'pk' => ($c['Key'] ?? void) === 'PRI']
+	}
+	return null
+}
+
+static columnFormView($db, $table, $colName = null){
+	static::checkTable($db, $table)
+	$editing = !is_null($colName)
+	$spec = $editing ? static::colSpec($db, $table, $colName) : null
+	$editing && !$spec && error('Column not found', 404)
+	$hidden = $editing ? input(type: 'hidden', name: 'orig', value: $colName) : void
+	$form = tag('form', $hidden.static::columnRow(0, $spec).tag('div', button($editing ? 'Edit column' : 'Add column', type: 'submit', class: 'db-btn primary').tag('a', 'Cancel', href: static::href('structure', $db, $table), class: 'async db-btn ghost'), class: 'db-bar'), method: 'post', action: static::href('column', $db, $table), class: 'async db-form')
+	return tag('div', static::head(($editing ? '✏️ ' : '＋ ').esc($table), $editing ? 'Editing column “'.esc((string)$colName).'”' : 'Add column').static::topbar($db, $table, 'column').$form, class: 'dash')
+}
+
+static confirmForm($action, $hidden, $expect, $label, $btnLabel){
+	return tag('form', $hidden.tag('p', $label, class: 'db-note').tag('div', input(type: 'text', name: 'confirm', placeholder: $expect, autocomplete: 'off', class: 'db-confirm-input', data_expect: $expect).button($btnLabel, type: 'submit', class: 'db-btn danger', disabled: true), class: 'db-bar'), method: 'post', action: $action, class: 'async db-confirm-form')
+}
+
+static splitSql($sql){
+	$stmts = []
+	$cur = void
+	$n = strlen($sql)
+	$i = 0
+	$inS = false
+	$inD = false
+	$inB = false
+	$inLine = false
+	$inBlock = false
+	while ($i < $n){
+		$ch = $sql[$i]
+		$nx = $i + 1 < $n ? $sql[$i + 1] : void
+		if ($inLine){
+			$cur .= $ch
+			$ch === lf && $inLine = false
+			$i++
+			continue
+		}
+		if ($inBlock){
+			$cur .= $ch
+			if ($ch === '*' && $nx === '/'){
+				$cur .= $nx
+				$i += 2
+				$inBlock = false
+				continue
+			}
+			$i++
+			continue
+		}
+		if ($inS){
+			$cur .= $ch
+			if ($ch === bs && $i + 1 < $n){
+				$cur .= $nx
+				$i += 2
+				continue
+			}
+			$ch === "'" && $inS = false
+			$i++
+			continue
+		}
+		if ($inD){
+			$cur .= $ch
+			if ($ch === bs && $i + 1 < $n){
+				$cur .= $nx
+				$i += 2
+				continue
+			}
+			$ch === dq && $inD = false
+			$i++
+			continue
+		}
+		if ($inB){
+			$cur .= $ch
+			$ch === bt && $inB = false
+			$i++
+			continue
+		}
+		if ($ch === '-' && $nx === '-'){
+			$inLine = true
+			$cur .= $ch
+			$i++
+			continue
+		}
+		if ($ch === '#'){
+			$inLine = true
+			$cur .= $ch
+			$i++
+			continue
+		}
+		if ($ch === '/' && $nx === '*'){
+			$inBlock = true
+			$cur .= $ch.$nx
+			$i += 2
+			continue
+		}
+		if ($ch === "'"){
+			$inS = true
+			$cur .= $ch
+			$i++
+			continue
+		}
+		if ($ch === dq){
+			$inD = true
+			$cur .= $ch
+			$i++
+			continue
+		}
+		if ($ch === bt){
+			$inB = true
+			$cur .= $ch
+			$i++
+			continue
+		}
+		if ($ch === semi){
+			$t = trim($cur)
+			$t !== void && $stmts[] = $t
+			$cur = void
+			$i++
+			continue
+		}
+		$cur .= $ch
+		$i++
+	}
+	$t = trim($cur)
+	$t !== void && $stmts[] = $t
+	return $stmts
+}
+
+route both GET dbadmin {
+	%app->active = 'dbadmin'
+	if (!static::guard()) return main('No access to this page.', 'No access')
+	if (!static::connected()) return main(static::loginView(), 'Database')
+	try {
+		$out = static::pickerView()
+	}
+	catch (\PDOException $e){
+		unset(%session->dbadmin)
+		$out = static::loginView($e->getMessage())
+	}
+	main($out, 'Database')
+}
+
+route async POST dbadmin login {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	$c = ['driver' => 'mysql', 'host' => trim((string)(%payload->host ?? void)) ?: 'localhost', 'user' => trim((string)(%payload->user ?? void)), 'pass' => (string)(%payload->password ?? void)]
+	if ($c['user'] === void) return apply(inner: ['#dbLoginError' => tag('span', 'Enter a username', class: 'db-err')])
+	try {
+		static::connectMysql($c)
+	}
+	catch (\PDOException $e){
+		return apply(inner: ['#dbLoginError' => tag('span', esc($e->getMessage()), class: 'db-err')])
+	}
+	%session->dbadmin = $c
+	return location('/dbadmin')
+}
+
+route async POST dbadmin sqlite {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	$name = basename((string)(%payload->file ?? void))
+	$files = static::dataFiles()
+	if (!isset($files[$name])) return apply(inner: ['#dbLoginError' => tag('span', 'Unknown file', class: 'db-err')])
+	try {
+		phlo('SQLite', $files[$name])->PDO->query('SELECT 1')
+	}
+	catch (\Throwable $e){
+		return apply(inner: ['#dbLoginError' => tag('span', esc($e->getMessage()), class: 'db-err')])
+	}
+	%session->dbadmin = ['driver' => 'sqlite', 'file' => $files[$name], 'name' => $name]
+	return location('/dbadmin')
+}
+
+route async POST dbadmin logout {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	unset(%session->dbadmin)
+	return location('/dbadmin')
+}
+
+route both GET dbadmin db $db {
+	%app->active = 'dbadmin'
+	if (!static::guard()) return main('No access to this page.', 'No access')
+	if (!static::connected()) return main(static::loginView(), 'Database')
+	try {
+		$out = static::tablesView($db)
+	}
+	catch (\PDOException $e){
+		$out = static::errorBox($e->getMessage())
+	}
+	main($out, $db)
+}
+
+route both GET dbadmin table $db $table {
+	%app->active = 'dbadmin'
+	if (!static::guard()) return main('No access to this page.', 'No access')
+	if (!static::connected()) return main(static::loginView(), 'Database')
+	try {
+		$out = static::browseView($db, $table)
+	}
+	catch (\PDOException $e){
+		$out = static::errorBox($e->getMessage())
+	}
+	main($out, $table, path: static::currentPath())
+}
+
+route both GET dbadmin structure $db $table {
+	%app->active = 'dbadmin'
+	if (!static::guard()) return main('No access to this page.', 'No access')
+	if (!static::connected()) return main(static::loginView(), 'Database')
+	try {
+		$out = static::structureView($db, $table)
+	}
+	catch (\PDOException $e){
+		$out = static::errorBox($e->getMessage())
+	}
+	main($out, $table.' · structure')
+}
+
+route both GET dbadmin row $db $table {
+	%app->active = 'dbadmin'
+	if (!static::guard()) return main('No access to this page.', 'No access')
+	if (!static::connected()) return main(static::loginView(), 'Database')
+	try {
+		$out = static::rowView($db, $table)
+	}
+	catch (\PDOException $e){
+		$out = static::errorBox($e->getMessage())
+	}
+	main($out, $table, path: static::currentPath())
+}
+
+route async POST dbadmin row $db $table {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	try {
+		static::checkTable($db, $table)
+		$cols = static::columns($db, $table)
+		$pk = static::pk($db, $table)
+		$p = %payload->objData
+		$keys = []
+		foreach ($pk AS $k) isset($p['pk_'.$k]) && $keys[$k] = (string)$p['pk_'.$k]
+		$editing = $pk && count($keys) === count($pk)
+		$set = []
+		foreach ($cols AS $c){
+			$f = (string)$c['Field']
+			if (!array_key_exists('val_'.$f, $p) && !isset($p['null_'.$f])) continue
+			if (isset($p['null_'.$f])) $set[$f] = null
+			else {
+				$v = (string)($p['val_'.$f] ?? void)
+				if ($v === void && str_contains((string)($c['Extra'] ?? void), 'auto_increment')) continue
+				$set[$f] = $v
+			}
+		}
+		if (!$set) return apply(error: 'No fields received')
+		if ($editing) static::q('UPDATE '.static::rel($db, $table).' SET '.loop(array_keys($set), fn($f) => static::ident($f).'=?', comma).' WHERE '.loop($pk, fn($k) => static::ident($k).'=?', ' AND ').(static::isSqlite() ? void : ' LIMIT 1'), ...array_values($set), ...array_values($keys))
+		else static::q('INSERT INTO '.static::rel($db, $table).' ('.loop(array_keys($set), fn($f) => static::ident($f), comma).') VALUES ('.implode(comma, array_fill(0, count($set), qm)).')', ...array_values($set))
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(location: static::href('table', $db, $table))
+}
+
+route async POST dbadmin delete $db $table {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	try {
+		static::checkTable($db, $table)
+		$pk = static::pk($db, $table)
+		if (!$pk) return apply(error: 'Table has no primary key')
+		parse_str((string)(%payload->key ?? void), $key)
+		$keys = []
+		foreach ($pk AS $k){
+			if (!isset($key[$k])) return apply(error: 'Onvolledige sleutel')
+			$keys[$k] = (string)$key[$k]
+		}
+		static::q('DELETE FROM '.static::rel($db, $table).' WHERE '.loop($pk, fn($k) => static::ident($k).'=?', ' AND ').(static::isSqlite() ? void : ' LIMIT 1'), ...array_values($keys))
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(location: static::href('table', $db, $table))
+}
+
+route both GET dbadmin sql $db= {
+	%app->active = 'dbadmin'
+	if (!static::guard()) return main('No access to this page.', 'No access')
+	if (!static::connected()) return main(static::loginView(), 'Database')
+	try {
+		$out = static::sqlView($db ?: null)
+	}
+	catch (\PDOException $e){
+		unset(%session->dbadmin)
+		$out = static::loginView($e->getMessage())
+	}
+	main($out, 'SQL-console')
+}
+
+route async POST dbadmin sql {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	$sql = trim((string)(%payload->query ?? void))
+	$db = trim((string)(%payload->db ?? void))
+	if ($sql === void) return apply(inner: ['#sqlResult' => static::errorBox('No query provided')])
+	$t0 = microtime(true)
+	try {
+		$pdo = static::dbh()
+		!static::isSqlite() && $db !== void && $pdo->exec('USE '.static::ident($db))
+		$stmt = $pdo->query($sql)
+	}
+	catch (\PDOException $e){
+		return apply(inner: ['#sqlResult' => static::errorBox($e->getMessage())])
+	}
+	$ms = round((microtime(true) - $t0) * 1000, 1)
+	if (!$stmt->columnCount()) return apply(inner: ['#sqlResult' => tag('p', '✓ '.$stmt->rowCount().' rows affected · '.$ms.'ms', class: 'db-meta ok')])
+	$rows = []
+	$capped = false
+	foreach ($stmt AS $r){
+		if (count($rows) >= 500){
+			$capped = true
+			break
+		}
+		$rows[] = $r
+	}
+	$out = void
+	if ($rows){
+		$ths = void
+		foreach (array_keys($rows[0]) AS $f) $ths .= tag('th', esc((string)$f))
+		$body = void
+		foreach ($rows AS $r){
+			$cells = void
+			foreach ($r AS $v) $cells .= tag('td', static::cell($v))
+			$body .= tag('tr', $cells)
+		}
+		$out = static::tableWrap(tag('table', tag('thead', tag('tr', $ths)).tag('tbody', $body), class: 'db-table'))
+	}
+	$meta = tag('p', count($rows).' rows'.($capped ? ' (capped at 500)' : void).' · '.$ms.'ms', class: 'db-meta')
+	return apply(inner: ['#sqlResult' => $meta.$out])
+}
+
+route both GET dbadmin privileges {
+	%app->active = 'dbadmin'
+	if (!static::guard()) return main('No access to this page.', 'No access')
+	if (!static::connected()) return main(static::loginView(), 'Database')
+	try {
+		$out = static::privilegesView()
+	}
+	catch (\PDOException $e){
+		$out = static::errorBox($e->getMessage())
+	}
+	main($out, 'Privileges')
+}
+
+route both GET dbadmin privilege {
+	%app->active = 'dbadmin'
+	if (!static::guard()) return main('No access to this page.', 'No access')
+	if (!static::connected()) return main(static::loginView(), 'Database')
+	$user = (string)(%req->query['user'] ?? void)
+	$host = (string)(%req->query['host'] ?? '%')
+	try {
+		$out = static::privilegeView($user, $host)
+	}
+	catch (\PDOException $e){
+		$out = static::errorBox($e->getMessage())
+	}
+	main($out, $user.'@'.$host, path: static::currentPath())
+}
+
+route async POST dbadmin privilege create {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	$user = trim((string)(%payload->user ?? void))
+	$host = trim((string)(%payload->host ?? void)) ?: '%'
+	$pass = (string)(%payload->password ?? void)
+	if ($user === void) return apply(error: 'Enter a username')
+	try {
+		static::checkHost($host)
+		static::q('CREATE USER '.static::acct($user, $host).($pass !== void ? ' IDENTIFIED BY '.%dbadmin->PDO->quote($pass) : void))
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(location: static::accountUrl($user, $host))
+}
+
+route async POST dbadmin privilege grant {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	$p = %payload->objData
+	$user = (string)($p['user'] ?? void)
+	$host = (string)($p['host'] ?? '%')
+	$privs = []
+	foreach (static::privs() AS $key => $label) isset($p['priv_'.$key]) && $privs[] = $label
+	if (!$privs) return apply(error: 'Select at least one privilege')
+	$db = (string)($p['db'] ?? '*')
+	$table = trim((string)($p['table'] ?? void)) ?: '*'
+	try {
+		$scope = $db === '*' ? '*.*' : static::ident($db).dot.($table === '*' ? '*' : static::ident($table))
+		static::q('GRANT '.implode(', ', $privs).' ON '.$scope.' TO '.static::acct($user, $host).(isset($p['grantopt']) ? ' WITH GRANT OPTION' : void))
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(location: static::accountUrl($user, $host))
+}
+
+route async POST dbadmin privilege revoke {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	$user = (string)(%payload->u ?? void)
+	$host = (string)(%payload->h ?? void)
+	$hash = (string)(%payload->g ?? void)
+	try {
+		$line = null
+		foreach (static::grants($user, $host) AS $g) sha1((string)$g) === $hash && $line = (string)$g
+		if (is_null($line)) return apply(error: 'Privilege not found. The page may be outdated, reload')
+		$m = regex('/^GRANT (.+) ON (.+?) TO /i', $line)
+		if (!$m) return apply(error: 'This privilege cannot be revoked')
+		$privList = $m[1].(stripos($line, 'WITH GRANT OPTION') !== false ? ', GRANT OPTION' : void)
+		static::q('REVOKE '.$privList.' ON '.$m[2].' FROM '.static::acct($user, $host))
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(location: static::accountUrl($user, $host))
+}
+
+route async POST dbadmin privilege password {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	$user = (string)(%payload->user ?? void)
+	$host = (string)(%payload->host ?? '%')
+	$pass = (string)(%payload->password ?? void)
+	if ($pass === void) return apply(error: 'Enter a password')
+	try {
+		static::q('ALTER USER '.static::acct($user, $host).' IDENTIFIED BY '.%dbadmin->PDO->quote($pass))
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(toast: '✓ Password changed', location: static::accountUrl($user, $host))
+}
+
+route async POST dbadmin privilege drop {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	$user = (string)(%payload->u ?? void)
+	$host = (string)(%payload->h ?? void)
+	try {
+		static::q('DROP USER '.static::acct($user, $host))
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(location: '/dbadmin/privileges')
+}
+
+route both GET dbadmin create $db {
+	%app->active = 'dbadmin'
+	if (!static::guard()) return main('No access to this page.', 'No access')
+	if (!static::connected()) return main(static::loginView(), 'Database')
+	try {
+		$out = static::createTableView($db)
+	}
+	catch (\PDOException $e){
+		$out = static::errorBox($e->getMessage())
+	}
+	main($out, 'New table')
+}
+
+route async POST dbadmin create $db {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	$p = %payload->objData
+	$table = trim((string)($p['table'] ?? void))
+	if ($table === void) return apply(error: 'Enter a table name')
+	try {
+		static::ident($table)
+		$cols = static::columnsFromPayload($p)
+		if (!$cols['defs']) return apply(error: 'Add at least one column')
+		$defs = $cols['defs']
+		$cols['pks'] && $defs[] = 'PRIMARY KEY ('.implode(comma, $cols['pks']).')'
+		static::q('CREATE TABLE '.static::rel($db, $table).' ('.implode(', ', $defs).')')
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(toast: '✓ Table created', location: static::href('structure', $db, $table))
+}
+
+route async POST dbadmin drop $db $table {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ((string)(%payload->confirm ?? void) !== (string)$table) return apply(error: 'Type the table name exactly to confirm')
+	try {
+		static::checkTable($db, $table)
+		static::q('DROP TABLE '.static::rel($db, $table))
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(toast: '✓ Table deleted', location: static::href('db', $db))
+}
+
+route async POST dbadmin truncate $db $table {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ((string)(%payload->confirm ?? void) !== (string)$table) return apply(error: 'Type the table name exactly to confirm')
+	try {
+		static::checkTable($db, $table)
+		static::q((static::isSqlite() ? 'DELETE FROM ' : 'TRUNCATE TABLE ').static::rel($db, $table))
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(toast: '✓ Table emptied', location: static::href('table', $db, $table))
+}
+
+route async POST dbadmin rename $db $table {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	$new = trim((string)(%payload->newname ?? void))
+	if ($new === void) return apply(error: 'Enter a new name')
+	try {
+		static::checkTable($db, $table)
+		static::q(static::isSqlite() ? 'ALTER TABLE '.static::rel($db, $table).' RENAME TO '.static::ident($new) : 'RENAME TABLE '.static::rel($db, $table).' TO '.static::rel($db, $new))
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(toast: '✓ Table renamed', location: static::href('structure', $db, $new))
+}
+
+route both GET dbadmin column $db $table {
+	%app->active = 'dbadmin'
+	if (!static::guard()) return main('No access to this page.', 'No access')
+	if (!static::connected()) return main(static::loginView(), 'Database')
+	$col = (string)(%req->query['col'] ?? void) ?: null
+	try {
+		$out = static::columnFormView($db, $table, $col)
+	}
+	catch (\PDOException $e){
+		$out = static::errorBox($e->getMessage())
+	}
+	main($out, 'Column', path: static::currentPath())
+}
+
+route async POST dbadmin column $db $table {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	$p = %payload->objData
+	$name = trim((string)($p['c0_name'] ?? void))
+	if ($name === void) return apply(error: 'Enter a column name')
+	try {
+		static::checkTable($db, $table)
+		$def = static::columnDef($name, $p['c0_type'] ?? 'INT', $p['c0_len'] ?? void, isset($p['c0_null']), $p['c0_default'] ?? void, isset($p['c0_auto']))
+		$orig = trim((string)($p['orig'] ?? void))
+		if ($orig !== void) static::q('ALTER TABLE '.static::rel($db, $table).' CHANGE '.static::ident($orig).space.$def)
+		else static::q('ALTER TABLE '.static::rel($db, $table).' ADD '.$def)
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(toast: '✓ Column saved', location: static::href('structure', $db, $table))
+}
+
+route both GET dbadmin status {
+	%app->active = 'dbadmin'
+	if (!static::guard()) return main('No access to this page.', 'No access')
+	if (!static::connected()) return main(static::loginView(), 'Database')
+	try {
+		$out = static::serverStatusView()
+	}
+	catch (\PDOException $e){
+		$out = static::errorBox($e->getMessage())
+	}
+	main($out, 'Server status')
+}
+
+route async POST dbadmin kill {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if (static::isSqlite()) return apply(error: 'Not available for SQLite')
+	$id = (int)(%payload->id ?? 0)
+	try {
+		static::q('KILL '.$id)
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(toast: '✓ Process '.$id.' killed', location: '/dbadmin/status')
+}
+
+route both GET dbadmin search $db {
+	%app->active = 'dbadmin'
+	if (!static::guard()) return main('No access to this page.', 'No access')
+	if (!static::connected()) return main(static::loginView(), 'Database')
+	$q = trim((string)(%req->query['q'] ?? void))
+	try {
+		$out = static::searchView($db, $q ?: void)
+	}
+	catch (\PDOException $e){
+		$out = static::errorBox($e->getMessage())
+	}
+	main($out, 'Search', path: static::currentPath())
+}
+
+route both GET dbadmin alter $db $table {
+	%app->active = 'dbadmin'
+	if (!static::guard()) return main('No access to this page.', 'No access')
+	if (!static::connected()) return main(static::loginView(), 'Database')
+	try {
+		$out = static::structureEditView($db, $table)
+	}
+	catch (\PDOException $e){
+		$out = static::errorBox($e->getMessage())
+	}
+	main($out, $table.' · edit structure')
+}
+
+# Reads columns in DOM order (payload order) so reordering counts.
+static alterPlan($p, $current){
+	$order = []
+	foreach (array_keys($p) AS $k){
+		$m = regex('/^c(\w+)_name$/', $k)
+		$m && trim((string)$p[$k]) !== void && $order[] = $m[1]
+	}
+	$cols = []
+	foreach ($order AS $i){
+		$cols[] = ['i' => $i, 'name' => trim((string)$p['c'.$i.'_name']), 'orig' => trim((string)($p['c'.$i.'_orig'] ?? void)), 'pk' => isset($p['c'.$i.'_pk']), 'auto' => isset($p['c'.$i.'_auto'])]
+	}
+	return $cols
+}
+
+route async POST dbadmin alter $db $table {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	$p = %payload->objData
+	try {
+		static::checkTable($db, $table)
+		$current = array_column(static::columns($db, $table), null, 'Field')
+		$cols = static::alterPlan($p, $current)
+		if (!$cols) return apply(error: 'No columns received')
+		$def = fn($c) => static::columnDef($c['name'], $p['c'.$c['i'].'_type'] ?? 'INT', $p['c'.$c['i'].'_len'] ?? void, isset($p['c'.$c['i'].'_null']), $p['c'.$c['i'].'_default'] ?? void, $c['auto'])
+		if (static::isSqlite()){
+			$pks = array_values(array_filter(array_map(fn($c) => $c['pk'] ? $c['name'] : null, $cols)))
+			$defs = []
+			foreach ($cols AS $c){
+				$d = $def($c)
+				count($pks) === 1 && $c['pk'] && $d .= ' PRIMARY KEY'.($c['auto'] && strcasecmp(static::colType($p['c'.$c['i'].'_type'] ?? void), 'INTEGER') === 0 ? ' AUTOINCREMENT' : void)
+				$defs[] = $d
+			}
+			count($pks) > 1 && $defs[] = 'PRIMARY KEY ('.loop($pks, fn($n) => static::ident($n), comma).')'
+			$tmp = $table.'_phlo_tmp'
+			$pairs = array_filter($cols, fn($c) => $c['orig'] !== void && isset($current[$c['orig']]))
+			$pdo = static::dbh()
+			$pdo->beginTransaction()
+			try {
+				$pdo->exec('CREATE TABLE '.static::ident($tmp).' ('.implode(', ', $defs).')')
+				if ($pairs) $pdo->exec('INSERT INTO '.static::ident($tmp).' ('.loop($pairs, fn($c) => static::ident($c['name']), comma).') SELECT '.loop($pairs, fn($c) => static::ident($c['orig']), comma).' FROM '.static::ident($table))
+				$pdo->exec('DROP TABLE '.static::ident($table))
+				$pdo->exec('ALTER TABLE '.static::ident($tmp).' RENAME TO '.static::ident($table))
+				$pdo->commit()
+			}
+			catch (\PDOException $e){
+				$pdo->inTransaction() && $pdo->rollBack()
+				return apply(error: $e->getMessage())
+			}
+		}
+		else {
+			$ops = []
+			$prev = null
+			$kept = []
+			foreach ($cols AS $c){
+				$pos = is_null($prev) ? ' FIRST' : ' AFTER '.static::ident($prev)
+				if ($c['orig'] !== void && isset($current[$c['orig']])){
+					$ops[] = 'CHANGE '.static::ident($c['orig']).space.$def($c).$pos
+					$kept[$c['orig']] = true
+				}
+				else $ops[] = 'ADD '.$def($c).$pos
+				$prev = $c['name']
+			}
+			foreach (array_keys($current) AS $orig) if (!isset($kept[$orig])) $ops[] = 'DROP COLUMN '.static::ident($orig)
+			static::q('ALTER TABLE '.static::rel($db, $table).' '.implode(', ', $ops))
+		}
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(toast: '✓ Structure saved', location: static::href('structure', $db, $table))
+}
+
+route async POST dbadmin dropcolumn $db $table {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	$col = trim((string)(%payload->col ?? void))
+	try {
+		static::checkTable($db, $table)
+		static::q('ALTER TABLE '.static::rel($db, $table).' DROP COLUMN '.static::ident($col))
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(toast: '✓ Column deleted', location: static::href('structure', $db, $table))
+}
+
+route async POST dbadmin index $db $table {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	$type = strtoupper(trim((string)(%payload->type ?? 'INDEX')))
+	in_array($type, ['INDEX', 'UNIQUE', 'FULLTEXT', 'PRIMARY']) || $type = 'INDEX'
+	$name = trim((string)(%payload->name ?? void))
+	$want = array_filter(array_map('trim', explode(',', (string)(%payload->cols ?? void))))
+	if (!$want) return apply(error: 'Specify at least one column')
+	try {
+		$real = array_column(static::columns($db, $table), 'Field')
+		foreach ($want AS $w) in_array($w, $real) || error('Unknown column: '.$w, 400)
+		$colSql = loop($want, fn($c) => static::ident($c), comma)
+		if (static::isSqlite()){
+			$type === 'PRIMARY' && error('SQLite: PRIMARY KEY cannot be added as a separate index', 400)
+			$iname = $name !== void ? $name : 'idx_'.$table.'_'.implode('_', $want)
+			static::q('CREATE '.($type === 'UNIQUE' ? 'UNIQUE ' : void).'INDEX '.static::ident($iname).' ON '.static::ident($table).' ('.$colSql.')')
+		}
+		else {
+			$named = $name !== void ? space.static::ident($name) : void
+			$add = $type === 'PRIMARY' ? 'ADD PRIMARY KEY ('.$colSql.')' : 'ADD '.($type === 'INDEX' ? 'INDEX' : $type).$named.' ('.$colSql.')'
+			static::q('ALTER TABLE '.static::rel($db, $table).' '.$add)
+		}
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(toast: '✓ Index added', location: static::href('structure', $db, $table))
+}
+
+route async POST dbadmin dropindex $db $table {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	$name = trim((string)(%payload->name ?? void))
+	try {
+		static::checkTable($db, $table)
+		if (static::isSqlite()){
+			strtoupper($name) === 'PRIMARY' && error('SQLite: PRIMARY KEY cannot be dropped separately', 400)
+			static::q('DROP INDEX '.static::ident($name))
+		}
+		else {
+			$sql = strtoupper($name) === 'PRIMARY' ? 'DROP PRIMARY KEY' : 'DROP INDEX '.static::ident($name)
+			static::q('ALTER TABLE '.static::rel($db, $table).' '.$sql)
+		}
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(toast: '✓ Index deleted', location: static::href('structure', $db, $table))
+}
+
+route async POST dbadmin fk $db $table {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	$p = %payload->objData
+	$col = trim((string)($p['col'] ?? void))
+	$rdb = trim((string)($p['rdb'] ?? void))
+	$rtable = trim((string)($p['rtable'] ?? void))
+	$rcol = trim((string)($p['rcol'] ?? void))
+	$onDelete = static::fkActions()[strtoupper(trim((string)($p['ondelete'] ?? void)))] ?? 'RESTRICT'
+	$onUpdate = static::fkActions()[strtoupper(trim((string)($p['onupdate'] ?? void)))] ?? 'RESTRICT'
+	if ($col === void || $rtable === void || $rcol === void) return apply(error: 'Fill in column, ref. table and ref. column')
+	try {
+		$real = array_column(static::columns($db, $table), 'Field')
+		in_array($col, $real) || error('Unknown column: '.$col, 400)
+		$sql = 'ALTER TABLE '.static::rel($db, $table).' ADD FOREIGN KEY ('.static::ident($col).') REFERENCES '.static::rel($rdb, $rtable).' ('.static::ident($rcol).') ON DELETE '.$onDelete.' ON UPDATE '.$onUpdate
+		static::q($sql)
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(toast: '✓ Foreign key added', location: static::href('structure', $db, $table))
+}
+
+route async POST dbadmin dropfk $db $table {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	$name = trim((string)(%payload->name ?? void))
+	try {
+		static::checkTable($db, $table)
+		static::q('ALTER TABLE '.static::rel($db, $table).' DROP FOREIGN KEY '.static::ident($name))
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(toast: '✓ Foreign key deleted', location: static::href('structure', $db, $table))
+}
+
+route async POST dbadmin import $db {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	$file = %payload->sqlfile ?? null
+	if (!is_object($file)) return apply(inner: ['#importResult' => static::errorBox('No file received')])
+	$sql = (string)$file->contents
+	if (trim($sql) === void) return apply(inner: ['#importResult' => static::errorBox('Empty file')])
+	$stmts = static::splitSql($sql)
+	if (!$stmts) return apply(inner: ['#importResult' => static::errorBox('No executable statements found')])
+	$pdo = static::dbh()
+	try {
+		!static::isSqlite() && $pdo->exec('USE '.static::ident($db))
+	}
+	catch (\PDOException $e){
+		return apply(inner: ['#importResult' => static::errorBox($e->getMessage())])
+	}
+	$done = 0
+	$pdo->beginTransaction()
+	try {
+		foreach ($stmts AS $st){
+			$pdo->exec($st)
+			$done++
+		}
+		$pdo->inTransaction() && $pdo->commit()
+	}
+	catch (\PDOException $e){
+		$pdo->inTransaction() && $pdo->rollBack()
+		return apply(inner: ['#importResult' => static::errorBox('Statement '.($done + 1).' of '.count($stmts).' failed: '.$e->getMessage())])
+	}
+	return apply(toast: '✓ '.$done.' statements executed', location: static::href('db', $db))
+}
+
+route async POST dbadmin createdatabase {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	$name = trim((string)(%payload->name ?? void))
+	if ($name === void) return apply(error: 'Enter a database name')
+	try {
+		static::q('CREATE DATABASE '.static::ident($name))
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(toast: '✓ Database created', location: static::href('db', $name))
+}
+
+route async POST dbadmin dropdatabase $db {
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ((string)(%payload->confirm ?? void) !== (string)$db) return apply(error: 'Type the database name exactly to confirm')
+	try {
+		static::q('DROP DATABASE '.static::ident($db))
+	}
+	catch (\PDOException $e){
+		return apply(error: $e->getMessage())
+	}
+	return apply(toast: '✓ Database deleted', location: '/dbadmin')
+}
+
+route GET dbadmin export $db $table= {
+	if (!static::guard()) return main('No access to this page.', 'No access')
+	if (!static::connected()) return location('/dbadmin')
+	$format = strtolower((string)(%req->query['format'] ?? 'csv'))
+	try {
+		if (trim((string)$table) === void){
+			$tables = static::tables($db)
+			$totalRows = array_sum(array_map(fn($t) => (int)($t['Rows'] ?? 0), $tables))
+			if ($totalRows > 500000) return main('Database too large to export. Use mysqldump.', 'Export')
+			$out = '-- Phlo Dashboard export · database '.$db.' · '.date('Y-m-d H:i').lf.'SET FOREIGN_KEY_CHECKS=0;'.lf.lf
+			foreach ($tables AS $t) $out .= static::dumpSql($db, (string)$t['Name']).lf
+			$out .= 'SET FOREIGN_KEY_CHECKS=1;'.lf
+			return output($out, $db.'.sql', true)
+		}
+		static::checkTable($db, $table)
+		$status = null
+		foreach (static::tables($db) AS $t) (string)$t['Name'] === (string)$table && $status = $t
+		if ((int)($status['Rows'] ?? 0) > 250000) return main('Table too large to export. Use mysqldump.', 'Export')
+		if ($format === 'sql') return output(static::dumpSql($db, $table), $db.dot.$table.'.sql', true)
+		return output(static::dumpCsv($db, $table), $db.dot.$table.'.csv', true)
+	}
+	catch (\PDOException $e){
+		return main(static::errorBox($e->getMessage()), 'Export')
+	}
+}
+
+<script>
+on('submit', 'form.db-search', (form, e) => {
+	e.preventDefault()
+	let qs = new URLSearchParams(new FormData(form)).toString()
+	app.get(form.dataset.path + (qs ? '?' + qs : ''))
+})
+on('input', '.db-fctl input, .db-fctl textarea, .db-fctl select', (el) => {
+	if (el.type === 'checkbox') return
+	let box = el.closest('.db-fctl')?.querySelector('.db-null-toggle input')
+	box && (box.checked = false)
+})
+on('click', '#dbAddCol', () => {
+	let cols = obj('#dbCols'), n = cols.querySelectorAll('.db-col-row').length
+	let row = obj('#dbColTpl').querySelector('.db-col-row').cloneNode(true)
+	row.querySelectorAll('[name]').forEach((el) => el.name = el.name.replace('IDX', n))
+	cols.appendChild(row)
+})
+on('input', '.db-confirm-input', (el) => {
+	let btn = el.closest('form').querySelector('button[type=submit]')
+	btn && (btn.disabled = el.value !== el.dataset.expect)
+})
+on('click', '.db-row-up', (b) => {
+	let row = b.closest('.db-col-row'), prev = row.previousElementSibling
+	prev && prev.classList.contains('db-col-row') && row.parentNode.insertBefore(row, prev)
+})
+on('click', '.db-row-down', (b) => {
+	let row = b.closest('.db-col-row'), next = row.nextElementSibling
+	next && next.classList.contains('db-col-row') && row.parentNode.insertBefore(next, row)
+})
+on('click', '.db-row-del', (b) => b.closest('.db-col-row').remove())
+on('dragstart', '.db-cols-sortable .db-col-row', (row, e) => {
+	phlo.dragRow = row
+	row.classList.add('db-dragging')
+})
+on('dragend', '.db-cols-sortable .db-col-row', (row) => {
+	row.classList.remove('db-dragging')
+	phlo.dragRow = null
+})
+on('dragover', '.db-cols-sortable', (list, e) => {
+	e.preventDefault()
+	let drag = phlo.dragRow
+	if (!drag) return
+	let after = null
+	list.querySelectorAll('.db-col-row:not(.db-dragging)').forEach((r) => {
+		let box = r.getBoundingClientRect()
+		if (e.clientY > box.top + box.height / 2) after = r
+	})
+	after ? after.after(drag) : list.prepend(drag)
+})
+</script>
+
+<style>
+.db-topbar {
+	align-items: center
+	background: $surface
+	border: 1px solid $border
+	border-radius: 10px
+	display: flex
+	flex-wrap: wrap
+	gap: .75rem
+	justify-content: space-between
+	margin-bottom: 1rem
+	padding: .5rem .75rem
+}
+.db-crumbs {
+	align-items: center
+	display: flex
+	flex-wrap: wrap
+	gap: .35rem
+}
+.db-crumbs a {
+	color: $primary
+	text-decoration: none
+}
+.db-crumbs span: color: $muted
+.db-conn {
+	align-items: center
+	display: flex
+	gap: .6rem
+}
+.db-who {
+	color: $muted
+	font-family: monospace
+	font-size: .8rem
+}
+.db-scroll: overflow-x: auto
+.db-table {
+	background: $surface
+	border: 1px solid $border
+	border-collapse: collapse
+	font-size: .85rem
+	width: 100%
+}
+.db-table th {
+	background: $bg
+	color: $muted
+	font-weight: 600
+	padding: .45rem .6rem
+	text-align: left
+	white-space: nowrap
+}
+.db-table th a {
+	color: $muted
+	text-decoration: none
+	\:hover: color: $primary
+}
+.db-table td {
+	border-top: 1px solid $border
+	max-width: 28rem
+	overflow-wrap: anywhere
+	padding: .4rem .6rem
+	vertical-align: top
+}
+.db-table td.muted: color: $muted
+.db-table .num: text-align: right
+.db-table tr {
+	\:hover td: background: color-mix(in srgb, $surface 88%, $primary)
+}
+.db-name {
+	color: $primary
+	font-weight: 600
+	text-decoration: none
+}
+.db-fk-link {
+	color: $primary
+	text-decoration: none
+}
+.db-fk-link:hover: text-decoration: underline
+.db-btn {
+	align-items: center
+	background: $bg
+	border: 1px solid $border
+	border-radius: 8px
+	color: $text
+	cursor: pointer
+	display: inline-flex
+	font-size: .85rem
+	gap: .3rem
+	padding: .35rem .7rem
+	text-decoration: none
+}
+.db-btn:hover: border-color: $primary
+.db-btn.primary {
+	background: $primary
+	border-color: $primary
+	color: $on-primary
+}
+.db-btn.ghost: background: transparent
+.db-btn.mini {
+	font-size: .72rem
+	padding: .15rem .45rem
+}
+.db-bar {
+	align-items: center
+	display: flex
+	flex-wrap: wrap
+	gap: .5rem
+	margin: 0 0 .8rem
+}
+.db-bar.end: justify-content: flex-end
+.db-search {
+	align-items: center
+	display: inline-flex
+	gap: .4rem
+	margin-left: auto
+}
+.db-search input {
+	background: $bg
+	border: 1px solid $border
+	border-radius: 8px
+	color: $text
+	padding: .35rem .6rem
+}
+.db-acts {
+	text-align: right
+	white-space: nowrap
+}
+.db-acts a, .db-acts button: margin-left: .3rem
+.db-act {
+	background: none
+	border: none
+	cursor: pointer
+	font-size: .9rem
+	padding: .1rem .25rem
+	text-decoration: none
+}
+.db-null {
+	color: $muted
+	font-style: italic
+	opacity: .7
+}
+.db-errorbox {
+	background: color-mix(in srgb, $error 12%, $surface)
+	border: 1px solid $error
+	border-radius: 10px
+	margin: .8rem 0
+	padding: .7rem 1rem
+	white-space: pre-wrap
+}
+.db-note {
+	color: $muted
+	font-size: .85rem
+}
+.db-meta {
+	color: $muted
+	font-family: monospace
+	font-size: .85rem
+	margin: .6rem 0
+}
+.db-meta.ok: color: $success
+.db-pager {
+	align-items: center
+	display: flex
+	gap: .6rem
+	margin-top: .8rem
+}
+.db-pageinfo: color: $muted
+.db-login {
+	background: $surface
+	border: 1px solid $border
+	border-radius: 14px
+	display: flex
+	flex-direction: column
+	gap: .9rem
+	max-width: 360px
+	padding: 1.5rem
+}
+.db-field {
+	display: flex
+	flex-direction: column
+	gap: .3rem
+}
+.db-field span {
+	color: $muted
+	font-size: .8rem
+}
+.db-field input {
+	background: $bg
+	border: 1px solid $border
+	border-radius: 8px
+	color: $text
+	padding: .55rem .7rem
+}
+.db-err {
+	color: $error
+	display: block
+	font-size: .85rem
+}
+.db-console select {
+	background: $bg
+	border: 1px solid $border
+	border-radius: 8px
+	color: $text
+	padding: .35rem .6rem
+}
+.db-console textarea {
+	background: $bg
+	border: 1px solid $border
+	border-radius: 10px
+	box-sizing: border-box
+	color: $text
+	font-family: monospace
+	font-size: .9rem
+	padding: .7rem
+	width: 100%
+}
+.db-form {
+	background: $surface
+	border: 1px solid $border
+	border-radius: 10px
+	display: flex
+	flex-direction: column
+	gap: .6rem
+	max-width: 760px
+	padding: 1rem
+}
+.db-field-row {
+	align-items: start
+	display: grid
+	gap: .75rem
+	grid-template-columns: 180px 1fr
+}
+.db-flabel {
+	color: $text
+	font-family: monospace
+	font-size: .85rem
+	padding-top: .5rem
+}
+.db-flabel em {
+	color: $muted
+	font-size: .7rem
+	font-style: normal
+}
+.db-fctl {
+	align-items: center
+	display: flex
+	gap: .6rem
+}
+.db-fctl input, .db-fctl textarea, .db-fctl select {
+	background: $bg
+	border: 1px solid $border
+	border-radius: 8px
+	color: $text
+	flex: 1
+	font-family: monospace
+	font-size: .85rem
+	padding: .45rem .6rem
+}
+.db-null-toggle {
+	align-items: center
+	color: $muted
+	display: inline-flex
+	font-size: .75rem
+	gap: .25rem
+}
+.db-h2 {
+	font-size: 1rem
+	margin: 1.2rem 0 .5rem
+}
+.db-host {
+	color: $muted
+	font-weight: 400
+}
+.db-grant {
+	align-items: center
+	background: $surface
+	border: 1px solid $border
+	border-radius: 8px
+	display: flex
+	gap: .6rem
+	justify-content: space-between
+	margin-bottom: .4rem
+	padding: .45rem .7rem
+}
+.db-grant code {
+	font-family: monospace
+	font-size: .8rem
+	overflow-wrap: anywhere
+}
+.db-priv-grid {
+	display: grid
+	gap: .35rem .8rem
+	grid-template-columns: repeat(auto-fill, minmax(200px, 1fr))
+}
+.db-priv-box {
+	align-items: center
+	color: $text
+	display: inline-flex
+	font-size: .85rem
+	gap: .35rem
+}
+.db-priv-row {
+	display: flex
+	flex-wrap: wrap
+	gap: .8rem
+}
+.db-priv-row .db-field {
+	flex: 1
+	min-width: 160px
+}
+.db-priv-row select, .db-priv-row input {
+	background: $bg
+	border: 1px solid $border
+	border-radius: 8px
+	color: $text
+	padding: .45rem .6rem
+}
+.db-go: align-self: end
+.db-btn.danger {
+	border-color: $error
+	color: $error
+}
+.db-btn[disabled] {
+	cursor: not-allowed
+	opacity: .45
+}
+.db-col-tpl: display: none
+.db-col-row {
+	align-items: center
+	display: flex
+	flex-wrap: wrap
+	gap: .4rem
+	margin-bottom: .4rem
+}
+.db-col-row input, .db-col-row select {
+	background: $bg
+	border: 1px solid $border
+	border-radius: 8px
+	color: $text
+	font-size: .85rem
+	padding: .4rem .55rem
+}
+.db-col-name: flex: 1 1 140px
+.db-col-len: width: 90px
+.db-col-def: width: 110px
+.db-col-chk {
+	align-items: center
+	color: $muted
+	display: inline-flex
+	font-size: .78rem
+	gap: .2rem
+}
+.db-col-grip {
+	color: $muted
+	cursor: grab
+	font-size: 1.1rem
+	line-height: 1
+	user-select: none
+}
+.db-col-ctrl {
+	display: inline-flex
+	gap: .15rem
+}
+.db-col-ctrl button {
+	background: $bg
+	border: 1px solid $border
+	border-radius: 6px
+	color: $text
+	cursor: pointer
+	font-size: .8rem
+	line-height: 1
+	padding: .2rem .4rem
+}
+.db-col-ctrl button:hover: border-color: $primary
+.db-col-row.db-dragging {
+	opacity: .5
+	outline: 1px dashed $primary
+}
+.db-cols-sortable .db-col-row {
+	background: $surface
+	border: 1px solid $border
+	border-radius: 8px
+	padding: .45rem .5rem
+}
+.db-danger {
+	border: 1px solid $error
+	border-radius: 10px
+	margin-top: 1.5rem
+	padding: .5rem 1rem 1rem
+}
+.db-rename-input, .db-confirm-input {
+	background: $bg
+	border: 1px solid $border
+	border-radius: 8px
+	color: $text
+	padding: .45rem .6rem
+}
+.db-confirm-input: border-color: $error
+.db-file {
+	background: $bg
+	border: 1px solid $border
+	border-radius: 8px
+	color: $text
+	font-size: .85rem
+	padding: .35rem .5rem
+}
+nav a.sub.db-cur {
+	background: color-mix(in srgb, $primary 22%, transparent)
+	border-left: 3px solid $primary
+	color: $text
+	font-weight: 700
+	letter-spacing: .01em
+	margin-bottom: .2rem
+	opacity: 1
+}
+nav a.sub.db-cur i {
+	font-size: 1em
+	opacity: 1
+}
+nav a.sub.db-cur:hover {
+	background: $primary
+	color: $on-primary
+}
+.db-login-grid {
+	display: grid
+	gap: 1.5rem
+	grid-template-columns: repeat(auto-fit, minmax(280px, 1fr))
+	max-width: 760px
+}
+.db-login-col {
+	background: $surface
+	border: 1px solid $border
+	border-radius: 14px
+	padding: 1.25rem
+}
+.db-login-col .db-login {
+	background: none
+	border: none
+	max-width: none
+	padding: 0
+}
+.db-sqlite-list {
+	display: flex
+	flex-direction: column
+	gap: .4rem
+}
+.db-sqlite-item {
+	align-items: center
+	background: $bg
+	border: 1px solid $border
+	border-radius: 8px
+	color: $text
+	cursor: pointer
+	display: flex
+	gap: .5rem
+	justify-content: space-between
+	padding: .55rem .75rem
+	text-align: left
+}
+.db-sqlite-item:hover: border-color: $primary
+.db-file-size {
+	color: $muted
+	font-size: .78rem
+}
+.db-fk-arrow: color: $muted
+.db-fk-lbl {
+	color: $muted
+	font-size: .78rem
+}
+.db-form select {
+	background: $bg
+	border: 1px solid $border
+	border-radius: 8px
+	color: $text
+	padding: .4rem .55rem
+}
+</style>

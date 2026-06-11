@@ -2,8 +2,8 @@
 
 view: $this->id
 
-static titleList = 'Domeinen'
-static titleRecord = 'Domein'
+static titleList = 'Domains'
+static titleRecord = 'Domain'
 
 static pp = 100
 static table = 'domains'
@@ -11,20 +11,20 @@ static order = 'id ASC'
 
 static objFilters = [
 	'mail' => [
-		'title'  => 'Met e-mail',
+		'title'  => 'With email',
 		'filter' => 'mail = 1',
 	],
 ]
 
 static objSorts = [
 	'expires' => [
-		'title' => 'Verloopdatum',
+		'title' => 'Expiry date',
 		'order' => 'expires ASC',
 	],
 ]
 
 static objWidgets => [
-	'Verloop domeinen' => obj (
+	'Domain expiry' => obj (
 			order: 5,
 			type: 'list',
 			data: loop(static::records(
@@ -39,7 +39,7 @@ static objWidgets => [
 static schema => arr (
 	id: field (
 		type: 'text',
-		title: 'Domein',
+		title: 'Domain',
 		change: 'label',
 	),
 	registrar: field (
@@ -49,10 +49,10 @@ static schema => arr (
 	),
 	mail: field (
 		type: 'bool',
-		title: 'E-mail',
+		title: 'Email',
 	),
 	expires: field (
 		type: 'date',
-		title: 'Verloopt',
+		title: 'Expires',
 	),
 )

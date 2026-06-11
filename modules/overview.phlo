@@ -51,17 +51,17 @@ static serverCard($node){
 	$label = $feed['label'] ?? $node
 	$ok = $feed['ok'] ?? false
 	$pill = tag('span', tag('span', void, class: 'sw-dot').tag('span', $ok ? 'online' : 'offline'), class: 'sw-pill '.($ok ? 'online' : 'offline'))
-	$titles = tag('div', tag('span', $label, class: 'kpi-name').tag('span', $ok ? (($feed['server'] ?? '?').' · build '.($feed['build'] ?? $feed['phlo'] ?? '?')) : 'niet bereikbaar', class: 'kpi-sub', title: 'Phlo '.($feed['phlo'] ?? '?')), class: 'kpi-titles')
+	$titles = tag('div', tag('span', $label, class: 'kpi-name').tag('span', $ok ? (($feed['server'] ?? '?').' · build '.($feed['build'] ?? $feed['phlo'] ?? '?')) : 'unreachable', class: 'kpi-sub', title: 'Phlo '.($feed['phlo'] ?? '?')), class: 'kpi-titles')
 	$head = tag('div', tag('div', static::icon('server', 18, 'blue').$titles, class: 'kpi-id').$pill, class: 'kpi-head')
 	if (!$ok) return tag('a', tag('div', $head, class: 'kpi-card off'), href: '/node/'.$node, class: 'kpi-link async')
 	$m = (object)($feed['metrics'] ?? [])
 	$errTotal = 0
 	foreach (($feed['errors'] ?? []) AS $x) $errTotal += (int)($x['occurrences'] ?? 0)
 	$vis = (int)array_sum($feed['visitors'] ?? [])
-	$errStat = $errTotal ? tag('span', static::icon('alert', 14).tag('span', number_format($errTotal, 0, ',', '.')), class: 'kpi-stat bad', title: number_format($errTotal, 0, ',', '.').' errors') : tag('span', static::icon('check', 14, 'emerald').tag('span', '0'), class: 'kpi-stat good', title: 'Geen errors')
+	$errStat = $errTotal ? tag('span', static::icon('alert', 14).tag('span', number_format($errTotal, 0, ',', '.')), class: 'kpi-stat bad', title: number_format($errTotal, 0, ',', '.').' errors') : tag('span', static::icon('check', 14, 'emerald').tag('span', '0'), class: 'kpi-stat good', title: 'No errors')
 	$hosts = count($feed['apps'] ?? [])
 	$stats = tag('div', static::kpiStat('server', $hosts).static::kpiStat('clock', age_human($m->uptime_sec ?? 0)).static::kpiStat('users', number_format($vis, 0, ',', '.')).$errStat, class: 'kpi-stats')
-	$bars = tag('div', static::bar('CPU', static::loadPct($m), 'cpu', void, ($m->load1 ?? 0).' / '.($m->cpu_count ?? 0)).static::bar('Geheugen', static::pct($m->mem_used ?? 0, $m->mem_total ?? 0), 'activity', void, size_human($m->mem_used ?? 0).' / '.size_human($m->mem_total ?? 0)).static::bar('Opslag', static::pct($m->disk_used ?? 0, $m->disk_total ?? 0), 'harddrive', 'disk', size_human($m->disk_used ?? 0).' / '.size_human($m->disk_total ?? 0)), class: 'sw-bars')
+	$bars = tag('div', static::bar('CPU', static::loadPct($m), 'cpu', void, ($m->load1 ?? 0).' / '.($m->cpu_count ?? 0)).static::bar('Memory', static::pct($m->mem_used ?? 0, $m->mem_total ?? 0), 'activity', void, size_human($m->mem_used ?? 0).' / '.size_human($m->mem_total ?? 0)).static::bar('Storage', static::pct($m->disk_used ?? 0, $m->disk_total ?? 0), 'harddrive', 'disk', size_human($m->disk_used ?? 0).' / '.size_human($m->disk_total ?? 0)), class: 'sw-bars')
 	return tag('a', tag('div', $head.$stats.$bars, class: 'kpi-card'), href: '/node/'.$node, class: 'kpi-link async')
 }
 
@@ -95,7 +95,7 @@ static hostsPanel(){
 		$gMeta = tag('span', count($hosts).'×', class: 'g-count').($gVis ? tag('span', static::icon('users', 12).number_format($gVis, 0, ',', '.'), class: 'g-vis') : void).($gErr ? tag('span', static::icon('alert', 12).number_format($gErr, 0, ',', '.'), class: 'g-err') : void)
 		$rows .= tag('tr', tag('td', tag('span', $app, class: 'g-name').$gMeta, colspan: '6'), class: 'g-row', data_filter: $gFlt)
 		foreach ($hosts AS $hh){
-			$errCell = $hh['errOcc'] ? tag('a', tag('span', static::icon('alert', 13).tag('span', number_format($hh['errOcc'], 0, ',', '.')), class: 'err-badge'), href: '/errors/'.$hh['node'].'/'.$app, class: 'err-link async', title: 'Bekijk errors van '.$app) : tag('span', '0', class: 'err-zero')
+			$errCell = $hh['errOcc'] ? tag('a', tag('span', static::icon('alert', 13).tag('span', number_format($hh['errOcc'], 0, ',', '.')), class: 'err-badge'), href: '/errors/'.$hh['node'].'/'.$app, class: 'err-link async', title: 'View errors of '.$app) : tag('span', '0', class: 'err-zero')
 			$aliasBadge = ($hh['aliases'] ?? []) ? tag('span', '+'.count($hh['aliases']), class: 'h-alias', title: implode(', ', $hh['aliases'])) : void
 			$hostCell = tag('a', static::icon('globe', 14, 'blue').tag('span', $hh['host'], class: 'h-host'), href: 'https://'.$hh['host'].'/', target: '_blank', class: 'h-link', title: 'Open '.$hh['host']).$aliasBadge
 			$visCell = tag('span', static::icon('users', 14, 'blue').tag('span', number_format($hh['vis'], 0, ',', '.'), class: 'vis-num'), class: 'vis')
@@ -104,7 +104,7 @@ static hostsPanel(){
 			$count++
 		}
 	}
-	$head = tag('tr', tag('th', 'Server').tag('th', 'Host').tag('th', 'Env', class: 'c').tag('th', 'Status', class: 'c').tag('th', 'Bezoekers', class: 'c').tag('th', 'Errors', class: 'c'))
+	$head = tag('tr', tag('th', 'Server').tag('th', 'Host').tag('th', 'Env', class: 'c').tag('th', 'Status', class: 'c').tag('th', 'Visitors', class: 'c').tag('th', 'Errors', class: 'c'))
 	$filter = tag('input', type: 'search', placeholder: 'Filter hosts...', class: 'flt')
 	$tools = tag('div', $filter.tag('span', $count.' hosts · '.count($groups).' apps', class: 'st-badge'), class: 'st-tools')
 	$h = tag('div', tag('h2', static::icon('globe', 20, 'blue').tag('span', 'Hosts'), class: 'st-title').$tools, class: 'st-head')
@@ -133,7 +133,7 @@ static errorsView($node, $app = void){
 			$rows .= static::errorRow($e, $first)
 			$count++
 		}
-		$head = tag('tr', tag('th', 'Bestand').tag('th', 'Pad').tag('th', 'Melding').tag('th', 'Aantal', class: 'c').tag('th', 'Laatst', class: 'c'))
+		$head = tag('tr', tag('th', 'File').tag('th', 'Path').tag('th', 'Message').tag('th', 'Count', class: 'c').tag('th', 'Last', class: 'c'))
 		$title = 'Errors: '.$app
 	}
 	else {
@@ -150,20 +150,20 @@ static errorsView($node, $app = void){
 			$rows .= static::errorRow($e, $first)
 			$count++
 		}
-		$head = tag('tr', tag('th', 'App').tag('th', 'Bestand').tag('th', 'Melding').tag('th', 'Aantal', class: 'c').tag('th', 'Laatst', class: 'c'))
-		$title = 'Alle errors'
+		$head = tag('tr', tag('th', 'App').tag('th', 'File').tag('th', 'Message').tag('th', 'Count', class: 'c').tag('th', 'Last', class: 'c'))
+		$title = 'All errors'
 	}
-	$back = tag('a', static::icon('arrow', 15, 'muted').tag('span', 'Terug naar overzicht'), href: '/overview', class: 'err-back async')
-	$wipe = $canManage && $count ? tag('button', static::icon('x', 14).tag('span', 'Wis log'), type: 'button', data_post: 'manage/'.$node.'/errors-reset'.($single ? '/'.$app : void), data_confirm: 'Errors'.($single ? ' van '.$app : void).' op '.$label.' wissen?', class: 'mg-btn') : void
+	$back = tag('a', static::icon('arrow', 15, 'muted').tag('span', 'Back to overview'), href: '/overview', class: 'err-back async')
+	$wipe = $canManage && $count ? tag('button', static::icon('x', 14).tag('span', 'Clear log'), type: 'button', data_post: 'manage/'.$node.'/errors-reset'.($single ? '/'.$app : void), data_confirm: 'Clear errors'.($single ? ' of '.$app : void).' on '.$label.'?', class: 'mg-btn') : void
 	$filter = tag('input', type: 'search', placeholder: 'Filter errors...', class: 'flt')
 	$tools = tag('div', $filter.tag('span', $count.' entries', class: 'st-badge').$wipe, class: 'st-tools')
 	$sub = tag('span', $label.($single ? ' · '.$app : void), class: 'kpi-sub')
 	$h = tag('div', tag('div', tag('h2', static::icon('alert', 20, $count ? 'error' : 'emerald').tag('span', $title), class: 'st-title').$sub, class: 'err-htitle').$tools, class: 'st-head')
-	$body = $count ? tag('div', tag('table', tag('thead', $head).tag('tbody', $rows)), class: 'st-scroll') : tag('p', static::icon('check', 16, 'emerald').tag('span', 'Geen errors geregistreerd.'), class: 'err-empty')
+	$body = $count ? tag('div', tag('table', tag('thead', $head).tag('tbody', $rows)), class: 'st-scroll') : tag('p', static::icon('check', 16, 'emerald').tag('span', 'No errors registered.'), class: 'err-empty')
 	return tag('div', $back.tag('section', $h.$body, class: 'sw-card st-card'), class: 'dash')
 }
 
-static waState($status) => $status === 'ready' ? 'up' : ($status === 'offline' || $status === 'onbekend' ? 'down' : 'warn')
+static waState($status) => $status === 'ready' ? 'up' : ($status === 'offline' || $status === 'unknown' ? 'down' : 'warn')
 
 static nodeHostsTable($node, $feed){
 	$visitors = $feed['visitors'] ?? []
@@ -188,7 +188,7 @@ static nodeHostsTable($node, $feed){
 		$gMeta = tag('span', count($hosts).'×', class: 'g-count').($gVis ? tag('span', static::icon('users', 12).number_format($gVis, 0, ',', '.'), class: 'g-vis') : void).($gErr ? tag('span', static::icon('alert', 12).number_format($gErr, 0, ',', '.'), class: 'g-err') : void)
 		$rows .= tag('tr', tag('td', tag('span', $app, class: 'g-name').$gMeta, colspan: '5'), class: 'g-row', data_filter: $gFlt)
 		foreach ($hosts AS $hh){
-			$errCell = $hh['errOcc'] ? tag('a', tag('span', static::icon('alert', 13).tag('span', number_format($hh['errOcc'], 0, ',', '.')), class: 'err-badge'), href: '/errors/'.$node.'/'.$app, class: 'err-link async', title: 'Bekijk errors van '.$app) : tag('span', '0', class: 'err-zero')
+			$errCell = $hh['errOcc'] ? tag('a', tag('span', static::icon('alert', 13).tag('span', number_format($hh['errOcc'], 0, ',', '.')), class: 'err-badge'), href: '/errors/'.$node.'/'.$app, class: 'err-link async', title: 'View errors of '.$app) : tag('span', '0', class: 'err-zero')
 			$aliasBadge = $hh['aliases'] ? tag('span', '+'.count($hh['aliases']), class: 'h-alias', title: implode(', ', $hh['aliases'])) : void
 			$hostCell = tag('a', static::icon('globe', 14, 'blue').tag('span', $hh['host'], class: 'h-host'), href: 'https://'.$hh['host'].'/', target: '_blank', class: 'h-link', title: 'Open '.$hh['host']).$aliasBadge
 			$visCell = tag('span', static::icon('users', 14, 'blue').tag('span', number_format($hh['vis'], 0, ',', '.'), class: 'vis-num'), class: 'vis')
@@ -197,7 +197,7 @@ static nodeHostsTable($node, $feed){
 			$count++
 		}
 	}
-	$head = tag('tr', tag('th', 'Host').tag('th', 'Env', class: 'c').tag('th', 'Status', class: 'c').tag('th', 'Bezoekers', class: 'c').tag('th', 'Errors', class: 'c'))
+	$head = tag('tr', tag('th', 'Host').tag('th', 'Env', class: 'c').tag('th', 'Status', class: 'c').tag('th', 'Visitors', class: 'c').tag('th', 'Errors', class: 'c'))
 	$filter = tag('input', type: 'search', placeholder: 'Filter hosts...', class: 'flt')
 	$tools = tag('div', $filter.tag('span', $count.' hosts · '.count($groups).' apps', class: 'st-badge'), class: 'st-tools')
 	$h = tag('div', tag('h2', static::icon('globe', 20, 'blue').tag('span', 'Hosts'), class: 'st-title').$tools, class: 'st-head')
@@ -209,15 +209,15 @@ static nodeWaPanel($node, $feed){
 	if (!$was) return void
 	$rows = void
 	foreach ($was AS $w){
-		$st = $w['status'] ?? 'onbekend'
+		$st = $w['status'] ?? 'unknown'
 		$state = static::waState($st)
 		$up = isset($w['uptime']) ? age_human((int)$w['uptime']) : '-'
-		$wh = array_key_exists('webhook', $w) ? ($w['webhook'] ? tag('span', static::icon('check', 13, 'emerald').tag('span', 'webhook'), class: 'wh-on') : tag('span', static::icon('x', 13).tag('span', 'geen webhook'), class: 'wh-off')) : tag('span', '-', class: 'err-zero')
+		$wh = array_key_exists('webhook', $w) ? ($w['webhook'] ? tag('span', static::icon('check', 13, 'emerald').tag('span', 'webhook'), class: 'wh-on') : tag('span', static::icon('x', 13).tag('span', 'no webhook'), class: 'wh-off')) : tag('span', '-', class: 'err-zero')
 		$stCell = tag('span', tag('span', void, class: 'st-dot '.$state).tag('span', $st, class: 'sc-code '.$state), class: 'sc')
 		$rows .= tag('tr', tag('td', tag('span', $w['instance'] ?? '?', class: 'g-name')).tag('td', tag('code', ':'.($w['port'] ?? '?'), class: 'err-path'), class: 'c').tag('td', $stCell, class: 'c').tag('td', tag('span', $up, class: 'err-when'), class: 'c').tag('td', $wh, class: 'c'))
 	}
-	$head = tag('tr', tag('th', 'Instance').tag('th', 'Poort', class: 'c').tag('th', 'Status', class: 'c').tag('th', 'Uptime', class: 'c').tag('th', 'Inbound', class: 'c'))
-	$h = tag('div', tag('h2', static::icon('activity', 20, 'blue').tag('span', 'WhatsApp-bots'), class: 'st-title').tag('span', count($was).' engines', class: 'st-badge'), class: 'st-head')
+	$head = tag('tr', tag('th', 'Instance').tag('th', 'Port', class: 'c').tag('th', 'Status', class: 'c').tag('th', 'Uptime', class: 'c').tag('th', 'Inbound', class: 'c'))
+	$h = tag('div', tag('h2', static::icon('activity', 20, 'blue').tag('span', 'WhatsApp bots'), class: 'st-title').tag('span', count($was).' engines', class: 'st-badge'), class: 'st-head')
 	return tag('section', $h.tag('div', tag('table', tag('thead', $head).tag('tbody', $rows)), class: 'st-scroll'), class: 'sw-card st-card')
 }
 
@@ -225,9 +225,9 @@ static nodeDetail($node){
 	$feed = fleet::cached($node) ?: ['label' => $node, 'ok' => false]
 	$label = $feed['label'] ?? $node
 	$ok = $feed['ok'] ?? false
-	$back = tag('a', static::icon('arrow', 15, 'muted').tag('span', 'Terug naar overzicht'), href: '/overview', class: 'err-back async')
+	$back = tag('a', static::icon('arrow', 15, 'muted').tag('span', 'Back to overview'), href: '/overview', class: 'err-back async')
 	$pill = tag('span', tag('span', void, class: 'sw-dot').tag('span', $ok ? 'online' : 'offline'), class: 'sw-pill '.($ok ? 'online' : 'offline'))
-	$sub = $ok ? (($feed['server'] ?? '?').' · build '.($feed['build'] ?? $feed['phlo'] ?? '?').' · Phlo '.($feed['phlo'] ?? '?')) : 'niet bereikbaar'
+	$sub = $ok ? (($feed['server'] ?? '?').' · build '.($feed['build'] ?? $feed['phlo'] ?? '?').' · Phlo '.($feed['phlo'] ?? '?')) : 'unreachable'
 	$titles = tag('div', tag('span', $label, class: 'kpi-name').tag('span', $sub, class: 'kpi-sub'), class: 'kpi-titles')
 	$head = tag('div', tag('div', static::icon('server', 22, 'blue').$titles, class: 'kpi-id').$pill, class: 'kpi-head')
 	if (!$ok) return tag('div', $back.tag('section', tag('div', $head, class: 'nd-card'), class: 'sw-card'), class: 'dash')
@@ -235,9 +235,9 @@ static nodeDetail($node){
 	$errTotal = 0
 	foreach (($feed['errors'] ?? []) AS $x) $errTotal += (int)($x['occurrences'] ?? 0)
 	$vis = (int)array_sum($feed['visitors'] ?? [])
-	$errStat = $errTotal ? tag('a', static::icon('alert', 14).tag('span', number_format($errTotal, 0, ',', '.').' errors'), href: '/errors/'.$node, class: 'kpi-stat bad link async') : tag('span', static::icon('check', 14, 'emerald').tag('span', 'geen errors'), class: 'kpi-stat good')
-	$stats = tag('div', static::kpiStat('server', count($feed['apps'] ?? []).' hosts').static::kpiStat('clock', age_human($m->uptime_sec ?? 0)).static::kpiStat('users', number_format($vis, 0, ',', '.').' bezoekers').$errStat, class: 'kpi-stats nd-stats')
-	$bars = tag('div', static::bar('CPU', static::loadPct($m), 'cpu', void, ($m->load1 ?? 0).' / '.($m->cpu_count ?? 0)).static::bar('Geheugen', static::pct($m->mem_used ?? 0, $m->mem_total ?? 0), 'activity', void, size_human($m->mem_used ?? 0).' / '.size_human($m->mem_total ?? 0)).static::bar('Opslag', static::pct($m->disk_used ?? 0, $m->disk_total ?? 0), 'harddrive', 'disk', size_human($m->disk_used ?? 0).' / '.size_human($m->disk_total ?? 0)), class: 'sw-bars')
+	$errStat = $errTotal ? tag('a', static::icon('alert', 14).tag('span', number_format($errTotal, 0, ',', '.').' errors'), href: '/errors/'.$node, class: 'kpi-stat bad link async') : tag('span', static::icon('check', 14, 'emerald').tag('span', 'no errors'), class: 'kpi-stat good')
+	$stats = tag('div', static::kpiStat('server', count($feed['apps'] ?? []).' hosts').static::kpiStat('clock', age_human($m->uptime_sec ?? 0)).static::kpiStat('users', number_format($vis, 0, ',', '.').' visitors').$errStat, class: 'kpi-stats nd-stats')
+	$bars = tag('div', static::bar('CPU', static::loadPct($m), 'cpu', void, ($m->load1 ?? 0).' / '.($m->cpu_count ?? 0)).static::bar('Memory', static::pct($m->mem_used ?? 0, $m->mem_total ?? 0), 'activity', void, size_human($m->mem_used ?? 0).' / '.size_human($m->mem_total ?? 0)).static::bar('Storage', static::pct($m->disk_used ?? 0, $m->disk_total ?? 0), 'harddrive', 'disk', size_human($m->disk_used ?? 0).' / '.size_human($m->disk_total ?? 0)), class: 'sw-bars')
 	$metricsCard = tag('section', tag('div', $head.$stats, class: 'nd-top').$bars, class: 'sw-card nd-card')
 	return tag('div', $back.$metricsCard.static::nodeWaPanel($node, $feed).static::nodeHostsTable($node, $feed), class: 'dash')
 }
@@ -246,21 +246,21 @@ route both GET overview {
 	%app->active = 'overview'
 	$local = fleet::cached('local')
 	$polled = $local ? date('H:i:s', (int)($local['polled'] ?? $local['time'] ?? 0)) : '-'
-	$titleBlock = tag('div', tag('h1', static::icon('activity', 26, 'blue').tag('span', 'Fleet Dashboard', class: 'grad'), class: 'dash-title').tag('p', 'Real-time monitoring van alle servers', class: 'dash-sub'))
-	$update = tag('div', static::icon('refresh', 16, 'muted').tag('span', 'Laatste poll: '.tag('span', $polled, class: 'upd-time')), class: 'dash-update')
+	$titleBlock = tag('div', tag('h1', static::icon('activity', 26, 'blue').tag('span', 'Fleet Dashboard', class: 'grad'), class: 'dash-title').tag('p', 'Real-time monitoring of all servers', class: 'dash-sub'))
+	$update = tag('div', static::icon('refresh', 16, 'muted').tag('span', 'Last poll: '.tag('span', $polled, class: 'upd-time')), class: 'dash-update')
 	$head = tag('header', $titleBlock.$update, class: 'dash-head')
-	main(tag('div', $head.static::serversGrid().static::hostsPanel(), class: 'dash'), 'Overzicht')
+	main(tag('div', $head.static::serversGrid().static::hostsPanel(), class: 'dash'), 'Overview')
 }
 
 route both GET errors $node $app= {
 	%app->active = 'overview'
-	if (!auth::user()?->canServer($node)) return main('Geen toegang tot deze server.', 'Geen toegang')
+	if (!auth::user()?->canServer($node)) return main('No access to this server.', 'No access')
 	main(static::errorsView($node, $app), 'Errors')
 }
 
 route both GET node $node {
 	%app->active = 'overview'
-	if (!auth::user()?->canServer($node)) return main('Geen toegang tot deze server.', 'Geen toegang')
+	if (!auth::user()?->canServer($node)) return main('No access to this server.', 'No access')
 	main(static::nodeDetail($node), 'Node · '.$node)
 }
 

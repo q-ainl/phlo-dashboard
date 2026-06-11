@@ -1,12 +1,11 @@
-prop lang => 'nl'
+prop lang => 'en'
 prop token => %cookies->token ??= token(20)
 prop title = 'Phlo Dashboard'
 prop themeColor = 'black'
-prop theme => %session->theme ?? 'cobalt'
-prop trans => %session->trans ?? 'cards'
-prop options = 'wss'
-prop version = '1.0.1'
-prop model = 'gpt-4o'
+prop theme => %session->theme ?? 'ionstorm'
+prop trans => %session->trans ?? 'ripple'
+prop version = '1.3.0'
+prop model = 'gpt-4o-mini'
 prop publicPaths = ['api']
 
 prop models => array_values(array_filter(['visitor', 'domain', 'user', 'subscription'], fn($m) => phlo_exists($m)))
@@ -16,20 +15,20 @@ method navMenu {
 	$u = auth::user()
 	if (!$u) return []
 	$full = [
-			'scanlog'  => ['icon' => '📸', 'uri' => 'scanlog', 'title' => 'Scanlog', 'admin' => false],
-		'overview' => ['icon' => '🏠', 'uri' => 'overview', 'title' => 'Overzicht', 'admin' => false],
+		'visitor'  => ['icon' => '👁️', 'uri' => 'visitors', 'title' => 'Visitors', 'admin' => true],
+		'dbadmin'  => ['icon' => '🛢️', 'uri' => 'dbadmin',  'title' => 'Database', 'admin' => true],
+		'overview' => ['icon' => '🏠', 'uri' => 'overview', 'title' => 'Overview', 'admin' => false],
 		'graph'    => ['icon' => '🕸️', 'uri' => 'graph', 'title' => 'Graph', 'admin' => false],
-		'visitor'  => ['icon' => '👁️', 'uri' => 'visitors', 'title' => 'Bezoekers', 'admin' => true],
-		'domain'   => ['icon' => '🌍', 'uri' => 'domains',  'title' => 'Domeinen', 'admin' => true],
+		'domain'   => ['icon' => '🌍', 'uri' => 'domains',  'title' => 'Domains', 'admin' => true],
 		'site'     => ['icon' => '🌐', 'uri' => 'sites',    'title' => 'Sites', 'admin' => true],
 		'whatsapp' => ['icon' => '💬', 'uri' => 'whatsapp', 'title' => 'WhatsApp', 'admin' => true],
-		'message'  => ['icon' => '🔔', 'uri' => 'messages', 'title' => 'Meldingen', 'admin' => false],
-		'subscription' => ['icon' => '📡', 'uri' => 'subscriptions', 'title' => 'Abonnementen', 'admin' => true],
-		'user'     => ['icon' => '👤', 'uri' => 'users',    'title' => 'Gebruikers', 'admin' => true],
+		'message'  => ['icon' => '🔔', 'uri' => 'messages', 'title' => 'Notifications', 'admin' => false],
+		'subscription' => ['icon' => '📡', 'uri' => 'subscriptions', 'title' => 'Subscriptions', 'admin' => true],
+		'user'     => ['icon' => '👤', 'uri' => 'users',    'title' => 'Users', 'admin' => true],
 	]
 	$out = []
 	foreach ($full AS $key => $item){
-			if (!phlo_exists($key)) continue
+		if (!phlo_exists($key)) continue
 		if (($item['admin'] ?? false) && !$u->isAdmin) continue
 		if (!$u->canModule($key)) continue
 		$out[$key] = $item
@@ -37,14 +36,14 @@ method navMenu {
 	return $out
 }
 
-# Adaptief: full-mode (auth-module geladen) doet security/auth-gate/CMS; headless doet enkel routing → JSON-404.
+# Adaptive: full mode (auth module loaded) does security/auth-gate/CMS; headless does only routing → JSON 404.
 if (phlo_exists('auth')){
-	%security->strict
+	%security->basic
 	$this->token
 	if (auth::check()) return
 	auth::authed() && auth::user()
 	if (trim((string)%req->path, '/') === '') return auth::home()
-	if (!auth::allows(%req->path)) return main('Geen toegang tot deze pagina.', 'Geen toegang')
+	if (!auth::allows(%req->path)) return main('No access to this page.', 'No access')
 }
 if (app::route()) return
 if (phlo_exists('auth')){

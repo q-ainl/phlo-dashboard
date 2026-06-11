@@ -2,8 +2,8 @@
 
 view: $this->IP
 
-# Bezoekersdata via de fleet-API (GET /api/visitors, HMAC): de eigen node (als localVisitors=1, direct
-# zonder self-HTTP) + de peers met visitors=1 in [fleet]. Per request gecachet, samengevoegd. Geen remote-MySQL.
+# Visitor data via the fleet API (GET /api/visitors, HMAC): the own node (if localVisitors=1, directly
+# without self-HTTP) + the peers with visitors=1 in [fleet]. Cached per request, merged. No remote MySQL.
 static report {
 	%req->visitorReport ??= static::fetchReport()
 	return %req->visitorReport
@@ -73,8 +73,8 @@ static record(...$args){
 	return null
 }
 
-static titleList = 'Bezoekers'
-static titleRecord = 'Bezoeker'
+static titleList = 'Visitors'
+static titleRecord = 'Visitor'
 
 static table = 'visitors'
 static order = 'changed DESC'
@@ -94,7 +94,7 @@ prop client {
 	$os = str_starts_with((string)$this->os, 'Windows') ? 'Windows' : $this->os
 	return static::deviceIcon($this->device).space.$this->browser.($os ? ' ('.$os.')' : void)
 }
-prop location => !$this->IP ? tag('span', 'untracked', class: 'untracked', title: 'Geen cookie-consent') : ($this->country ? tag('a', static::flag($this->country).space.($this->city && $this->country ? "$this->city, $this->country" : ($this->country ?? dash)), href: "https://www.google.com/maps/@$this->lat,$this->lon,14z", target: 'map') : dash)
+prop location => !$this->IP ? tag('span', 'untracked', class: 'untracked', title: 'No cookie consent') : ($this->country ? tag('a', static::flag($this->country).space.($this->city && $this->country ? "$this->city, $this->country" : ($this->country ?? dash)), href: "https://www.google.com/maps/@$this->lat,$this->lon,14z", target: 'map') : dash)
 
 # Compact label for the recent-visitors widget; untracked visitors (no consent → no IP) show as
 # 'untracked' instead of their anonymous browser hash / empty city/os fields.
@@ -107,17 +107,17 @@ static recentLabel($v){
 static objWidgets {
 	$rep = static::report()
 	return [
-		'Actieve Bezoekers' => obj (
+		'Active Visitors' => obj (
 			order: 1,
 			type: 'gauge',
 			data: (int)($rep['active'] ?? 0),
 		),
-		'Laatste 5 Bezoekers' => obj (
+		'Last 5 Visitors' => obj (
 			order: 4,
 			type: 'list',
-			data: loop(array_slice($rep['recent'] ?? [], 0, 5), fn($v) => tag('a', static::recentLabel($v), href: '/visitor/'.($v['id'] ?? ''), class: 'async')." - ".tag('span', void, data_ts: (int)($v['changed'] ?? 0))),
+			data: loop(array_slice($rep['recent'] ?? [], 0, 5), fn($v) => tag('a', static::recentLabel($v), href: '/visitor/'.($v['id'] ?? ''), class: 'async')." · ".tag('span', void, data_ts: (int)($v['changed'] ?? 0))),
 		),
-		'Top 5 Landen (30d)' => obj (
+		'Top 5 Countries (30d)' => obj (
 			order: 9,
 			type: 'pie',
 			data: static::topPairs($rep['countries'] ?? [], 5),
@@ -164,13 +164,13 @@ static schema => arr (
 		type: 'text',
 		list: false,
 		record: false,
-		title: 'Pagina',
+		title: 'Page',
 		search: true,
 		length: 24,
 	),
 	lang: field (
 		type: 'text',
-		title: 'Taal',
+		title: 'Language',
 		length: 2,
 		list: false,
 	),
@@ -185,12 +185,12 @@ static schema => arr (
 	),
 	location: field (
 		type: 'virtual',
-		title: 'Locatie',
+		title: 'Location',
 		list: true,
 	),
 	duration: field (
 		type: 'virtual',
-		title: 'Duur',
+		title: 'Duration',
 	),
 	client: field (
 		type: 'virtual',
@@ -204,7 +204,7 @@ static schema => arr (
 	),
 	IP: field (
 		type: 'text',
-		title: 'IP Adres',
+		title: 'IP Address',
 		length: 15,
 		search: true,
 	),
@@ -226,14 +226,14 @@ static schema => arr (
 	),
 	device: field (
 		type: 'text',
-		title: 'Apparaat',
+		title: 'Device',
 		length: 12,
 		list: false,
 		record: false,
 	),
 	requests: field (
 		type: 'number',
-		title: 'Pagina\'s',
+		title: 'Pages',
 		list: true,
 	),
 	state: field (
@@ -244,13 +244,13 @@ static schema => arr (
 	),
 	width: field (
 		type: 'number',
-		title: 'Breedte',
+		title: 'Width',
 		list: false,
 		record: false,
 	),
 	height: field (
 		type: 'number',
-		title: 'Hoogte',
+		title: 'Height',
 		list: false,
 		record: false,
 	),
@@ -264,26 +264,26 @@ static schema => arr (
 	),
 	country: field (
 		type: 'virtual',
-		title: 'Land',
+		title: 'Country',
 		label: fn($r) => $r->country ?? dash,
 		list: false,
 		record: false,
 	),
 	city: field (
 		type: 'virtual',
-		title: 'Stad',
+		title: 'City',
 		label: fn($r) => $r->city ?? dash,
 		list: false,
 		record: false,
 	),
 	created: field (
 		type: 'datetime',
-		title: 'Gezien',
+		title: 'Seen',
 		list: false,
 	),
 	changed: field (
 		type: 'datetime',
-		title: 'Laatst actief',
+		title: 'Last active',
 	),
 )
 

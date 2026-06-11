@@ -1,5 +1,5 @@
 <?php
-# Node-lokale bootstrap - kopieer naar www/app.php en vul je eigen host/paden in.
+# Node-local bootstrap. Copy to www/app.php and fill in your own host and paths.
 # Niet in git: elke node heeft z'n eigen www/app.php (zie .gitignore).
 require('/srv/control/phlo/phlo.php');
 phlo_app (

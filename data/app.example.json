@@ -18,6 +18,7 @@
         "DB/DB",
         "DB/model",
         "DB/MySQL",
+        "DB/SQLite",
         "DOM/datatags",
         "DOM/dialog",
         "DOM/exists",
@@ -41,6 +42,7 @@
         "fields/text",
         "fields/token",
         "fields/virtual",
+        "files/file",
         "files/JSON",
         "tags.form",
         "payload",
@@ -68,12 +70,14 @@
         "widgets/list",
         "widgets/pie",
         "themes/cobalt",
+        "themes/ionstorm",
         "themes/midnight",
         "themes/oceandeep",
         "themes/ironspectrum",
         "themes/polar",
         "themes/light",
         "transitions/cards",
+        "transitions/ripple",
         "transitions/slide",
         "transitions/zoom",
         "transitions/flip",
@@ -92,13 +96,14 @@
         "whatsapp",
         "user",
         "message",
-        "subscription"
+        "subscription",
+        "dbadmin"
     ],
     "paths": {
         "resources": [
-            "/srv/control/CMS/",
+            "%app/vendor/phlo/cms/",
             "%app/modules/"
         ]
     },
-    "icons": "/srv/control/CMS/icons/"
+    "icons": "%app/vendor/phlo/cms/icons/"
 }

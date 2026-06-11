@@ -16,7 +16,7 @@ static authPeer {
 
 static feedData => static::collect()
 
-# Control-base (de map die dit dashboard bevat): /srv/control resp. /files/Server/control - afgeleid van app.
+# Control base (the directory that contains this dashboard): /srv/control or /files/Server/control, derived from app.
 static base => dirname(rtrim(app, '/'))
 
 static env($block){
@@ -25,7 +25,7 @@ static env($block){
 	return 'prod'
 }
 
-# Apps + hosts uit de Caddy-sites: per blok primaire host (kortste non-www) + aliassen + env.
+# Apps + hosts from the Caddy sites: per block primary host (shortest non-www) + aliases + env.
 static caddyApps {
 	$apps = []
 	$skip = ['us', 'control', 'whatsapp']
@@ -55,9 +55,9 @@ static caddyApps {
 				$hostnames[] = $host
 			}
 			if (!$hostnames) continue
-			# Redirect-bewust: hosts die binnen het blok via een @host-matcher worden geredirect tellen niet
-			# als canoniek mee (zo wint jordiboerman.nl van jordi.nu, prestige van dblegaltax). Een blok dat
-			# als geheel redirect (bare redir, geen matcher) = redirect-only → vlag (geen echte app-host).
+			# Redirect-aware: hosts redirected within the block via an @host matcher do not count
+			# as canonical (so jordiboerman.nl wins over jordi.nu, prestige over dblegaltax). A block that
+			# redirects as a whole (bare redir, no matcher) = redirect-only → flag (not a real app host).
 			$redirected = []
 			$pureRedirect = false
 			$matchers = []
@@ -87,7 +87,7 @@ static caddyApps {
 	return $apps
 }
 
-# Bezoekers-tellingen per host uit een (mogelijk externe) DB-config.
+# Visitor counts per host from a (possibly external) DB config.
 static visitors($db){
 	if (!is_array($db) || empty($db['host']) || empty($db['database'])) return []
 	try {
@@ -99,7 +99,7 @@ static visitors($db){
 	}
 }
 
-# Status van de lokale phloWA-instances (config/wa*.js) via HTTP-health (+ qr indien niet ready).
+# Status of the local phloWA instances (config/wa*.js) via HTTP health (+ qr if not ready).
 static whatsapp {
 	$list = []
 	foreach (glob(static::base().'/config/wa*.js') ?: [] AS $f){
@@ -110,7 +110,7 @@ static whatsapp {
 			$res = json_decode((string)HTTP('http://127.0.0.1:'.$port.'/health', ['secret: '.$m[3]]), true)
 		}
 		catch (\Throwable $e){}
-		$entry = ['instance' => $m[1], 'port' => $port, 'status' => is_array($res) ? (string)($res['status'] ?? 'onbekend') : 'offline']
+		$entry = ['instance' => $m[1], 'port' => $port, 'status' => is_array($res) ? (string)($res['status'] ?? 'unknown') : 'offline']
 		if (is_array($res)){
 			$entry['uptime'] = (int)($res['uptime'] ?? 0)
 			$entry['webhook'] = (bool)($res['webhook'] ?? false)
@@ -128,7 +128,7 @@ static whatsapp {
 	return $list
 }
 
-# Volledige node-snapshot: apps, errors, systeem-metrics, bezoekers, whatsapp. Geserveerd via /api/feed.
+# Full node snapshot: apps, errors, system metrics, visitors, whatsapp. Served via /api/feed.
 static collect {
 	$apps = static::caddyApps()
 	$errors = []
@@ -182,12 +182,12 @@ static collect {
 	]
 }
 
-# --- Poller (CLI-command `php app.php fleet::poll`, draait als frankenphp via /etc/cron.d/fleet-poll) ---
-# Verzamelt elke node in de dashboard-cache (data/fleet/<node>.json). Het web (frankenphp) leest enkel die
-# cache en blokkeert dus nooit op een trage/dode node. Vervangt het oude rauwe bin/fleet-poll.php.
+# --- Poller (CLI command `php app.php fleet::poll`, runs as frankenphp via /etc/cron.d/fleet-poll) ---
+# Collects every node into the dashboard cache (data/fleet/<node>.json). The web (frankenphp) only reads that
+# cache and therefore never blocks on a slow/dead node. Replaces the old raw bin/fleet-poll.php.
 
-# Parallelle bereikbaarheids-check van alle hosts tegelijk. curl_multi i.p.v. HTTP() omdat HTTP() één
-# request per keer doet en ~36 hosts sequentieel niet binnen de 2-min poll-cyclus passen.
+# Parallel reachability check of all hosts at once. curl_multi instead of HTTP() because HTTP() does one
+# request at a time and ~36 hosts sequentially do not fit within the 2-min poll cycle.
 static ping($hosts, $local = false){
 	$hosts = array_values(array_unique($hosts))
 	if (!$hosts || !function_exists('curl_multi_init')) return []
@@ -225,7 +225,7 @@ static ping($hosts, $local = false){
 	return $out
 }
 
-# Hangt per app de http-code + responstijd aan de feed-data.
+# Attaches the http code + response time per app to the feed data.
 static attachPing($data, $local = false){
 	if (!is_array($data) || empty($data['apps'])) return $data
 	$ping = static::ping(array_column($data['apps'], 'host'), $local)
@@ -236,7 +236,7 @@ static attachPing($data, $local = false){
 	return $data
 }
 
-# Verpakt een node-snapshot met node/label/mode/ok/polled-metadata voor de cache.
+# Wraps a node snapshot with node/label/mode/ok/polled metadata for the cache.
 static wrapNode($name, $mode, $data){
 	$rec = is_array($data) ? $data : []
 	$rec['node'] = $name
@@ -247,7 +247,7 @@ static wrapNode($name, $mode, $data){
 	return $rec
 }
 
-# Schrijft één node-cache. Draait als frankenphp, dus de cache krijgt direct de juiste eigenaar
+# Writes one node cache. Runs as frankenphp, so the cache directly gets the right owner
 # (chown is best-effort, no-op buiten root).
 static storeNode($name, $data){
 	$dir = data.'fleet'
@@ -258,8 +258,8 @@ static storeNode($name, $data){
 	@chgrp($file, 'frankenphp')
 }
 
-# Poll-cyclus: lokale node in-process via collect(); pull-peers via HMAC GET /api/feed. Daarna
-# nieuwe prod-fouten naar het centrale messaging-endpoint. (ssh-modus is geretireerd: alles is pull.)
+# Poll cycle: local node in-process via collect(); pull peers via HMAC GET /api/feed. Then
+# new prod errors to the central messaging endpoint. (ssh mode is retired: everything is pull.)
 static poll {
 	static::storeNode('local', static::wrapNode('local', 'self', static::attachPing(static::collect(), true)))
 	$done = ['local']
@@ -287,16 +287,19 @@ static poll {
 	return ['ok' => true, 'nodes' => $done, 'reported' => $pushed]
 }
 
-# Pusht nieuwe PROD-fouten naar POST /api/notify (secret) → dashboard-inbox + subscription-dispatch.
-# Dev/stage worden overgeslagen (error-reporting uit op dev). Per (hash:count) gededupeerd via reported.json,
-# en alleen fouten van de laatste 15 min. Via HTTP() (geen rauwe curl): het web maakt de melding aan.
+# Pushes new PROD errors to POST /api/notify (secret) -> dashboard inbox + subscription dispatch.
+# Dev/stage are skipped (error reporting is off on dev). Each error hash notifies at most once per hour
+# (throttle via reported.json) and only for errors seen in the last 15 min. Via HTTP() (no raw curl).
 static reportErrors {
 	$c = %creds->notify ?? null
 	$url = (string)($c->url ?? void)
 	$secret = (string)($c->secret ?? void)
 	if ($url === void || $secret === void) return 0
+	$cooldown = 3600
 	$stateFile = data.'fleet/reported.json'
-	$reported = is_file($stateFile) ? (array)json_decode((string)file_get_contents($stateFile), true) : []
+	$raw = is_file($stateFile) ? (array)json_decode((string)file_get_contents($stateFile), true) : []
+	$cut = time() - 86400
+	$reported = array_filter($raw, fn($t) => (int)$t > $cut)
 	$pushed = 0
 	foreach (glob(data.'fleet/*.json') ?: [] AS $f){
 		if (basename($f) === 'reported.json') continue
@@ -306,10 +309,14 @@ static reportErrors {
 		$envByApp = []
 		foreach ((array)($d['apps'] ?? []) AS $a) $envByApp[(string)($a['app'] ?? '')] = (string)($a['env'] ?? 'prod')
 		foreach ((array)($d['errors'] ?? []) AS $app => $info){
-			if (($envByApp[(string)$app] ?? 'prod') !== 'prod') continue
 			foreach ((array)($info['entries'] ?? []) AS $hash => $e){
-				$key = $hash.':'.($e['count'] ?? 0)
-				if (isset($reported[$key])) continue
+				# Only notify errors from build-off (prod) environments. The engine stamps each
+				# error with the build flag of the environment it occurred in (authoritative).
+				if (!empty($e['build'])) continue
+				# Fallback for entries written before the engine stamped build: caddy-derived env.
+				if (!array_key_exists('build', $e) && ($envByApp[(string)$app] ?? 'prod') !== 'prod') continue
+				$key = (string)$hash
+				if (($reported[$key] ?? 0) > time() - $cooldown) continue
 				$ts = \DateTime::createFromFormat('j-n-Y H:i:s', (string)($e['lastOccurred'] ?? ''))
 				if (!$ts || $ts->getTimestamp() < time() - 900) continue
 				try {
@@ -317,9 +324,10 @@ static reportErrors {
 						'app' => (string)$app,
 						'type' => 'error',
 						'level' => 'error',
-						'title' => substr((string)($e['msg'] ?? 'Onbekende fout'), 0, 200),
-						'body' => trim((string)($e['file'] ?? '').' · '.($e['count'] ?? 1).'× · laatst '.($e['lastOccurred'] ?? '')),
+						'title' => substr((string)($e['msg'] ?? 'Unknown error'), 0, 200),
+						'body' => trim((string)($e['file'] ?? '').' · '.($e['count'] ?? 1).'× · last '.($e['lastOccurred'] ?? '')),
 						'server' => $node,
+						'host' => (string)$app,
 					])
 				}
 				catch (\Throwable $ex){
@@ -330,11 +338,11 @@ static reportErrors {
 			}
 		}
 	}
-	if ($pushed) file_put_contents($stateFile, json_encode($reported))
+	if ($pushed || count($reported) !== count($raw)) file_put_contents($stateFile, json_encode($reported))
 	return $pushed
 }
 
-# Geo-verrijking van bezoekersrijen via de lookup-cache + ipgeolocation.io (mist → API + cache).
+# Geo enrichment of visitor rows via the lookup cache + ipgeolocation.io (miss → API + cache).
 static geoEnrich($pdo, $rows, $ipgeoKey){
 	$ips = []
 	foreach ($rows AS $r) if (!empty($r['IP'])) $ips[$r['IP']] = true
@@ -371,7 +379,7 @@ static geoEnrich($pdo, $rows, $ipgeoKey){
 	return $rows
 }
 
-# Volledig bezoekers-rapport (lijst + aggregaties) uit de lokale DB - geserveerd via GET /api/visitors.
+# Full visitor report (list + aggregations) from the local DB, served via GET /api/visitors.
 static visitorReport {
 	$ini = @parse_ini_file(static::base().'/dashboard/data/creds.ini', true, INI_SCANNER_RAW)
 	$db = is_array($ini) ? ($ini['mysql'] ?? null) : null
@@ -391,7 +399,7 @@ static visitorReport {
 		return [
 			'active' => (int)$pdo->query('SELECT COUNT(id) FROM visitors WHERE changed > '.($now - 300))->fetchColumn(),
 			'recent' => $recent,
-			'countries' => $pdo->query('SELECT COALESCE(l.country, "Onbekend") AS country, COUNT(v.id) AS count FROM visitors v LEFT JOIN lookup l ON v.IP = l.ip WHERE v.changed > '.$d30.' GROUP BY country ORDER BY count DESC LIMIT 5')->fetchAll(\PDO::FETCH_ASSOC) ?: [],
+			'countries' => $pdo->query('SELECT COALESCE(l.country, "Unknown") AS country, COUNT(v.id) AS count FROM visitors v LEFT JOIN lookup l ON v.IP = l.ip WHERE v.changed > '.$d30.' GROUP BY country ORDER BY count DESC LIMIT 5')->fetchAll(\PDO::FETCH_ASSOC) ?: [],
 			'browsers' => $pdo->query('SELECT browser, COUNT(id) AS count FROM visitors WHERE IP IS NOT NULL AND changed > '.$d30.' GROUP BY browser ORDER BY count DESC LIMIT 5')->fetchAll(\PDO::FETCH_ASSOC) ?: [],
 			'referrers' => $pdo->query('SELECT referrer, COUNT(id) AS count FROM visitors WHERE referrer IS NOT NULL AND changed > '.$d30.' GROUP BY referrer ORDER BY count DESC LIMIT 8')->fetchAll(\PDO::FETCH_ASSOC) ?: [],
 		]
@@ -401,8 +409,8 @@ static visitorReport {
 	}
 }
 
-# Federatie: een peer-node laat de master een master-user authenticeren voor één van zijn
-# subdashboards. De node tekent time.auth.email.module met zijn fleet-secret; geeft de matchende node-naam terug.
+# Federation: a peer node lets the master authenticate a master user for one of its
+# subdashboards. The node signs time.auth.email.module with its fleet secret; returns the matching node name.
 static authFed($email, $module){
 	$time = (int)($_SERVER['HTTP_X_FLEET_TIME'] ?? 0)
 	$sign = (string)($_SERVER['HTTP_X_FLEET_SIGN'] ?? void)
@@ -457,24 +465,24 @@ static runAction($command, $app = void){
 	$appsBase = dirname(dirname(rtrim(app, '/')))
 	if ($command === 'errors-reset'){
 		if ($app !== void && $app !== ''){
-			if (!preg_match('/^[a-z0-9._-]+$/i', (string)$app) || str_contains((string)$app, '..')) return 'ongeldige app'
+			if (!preg_match('/^[a-z0-9._-]+$/i', (string)$app) || str_contains((string)$app, '..')) return 'invalid app'
 			$path = $app === 'dashboard' ? data.'errors.json' : $appsBase.'/'.$app.'/data/errors.json'
-			return @file_put_contents($path, '{}') !== false ? 'errors van '.$app.' gewist' : 'kon errors niet wissen'
+			return @file_put_contents($path, '{}') !== false ? 'errors of '.$app.' cleared' : 'could not clear errors'
 		}
 		$n = 0
 		foreach (glob($appsBase.'/*/data/errors.json') AS $f) if (@file_put_contents($f, '{}') !== false) $n++
 		@file_put_contents(data.'errors.json', '{}')
-		return $n.' errorbestanden gewist'
+		return $n.' error files cleared'
 	}
 	if ($command === 'rebuild'){
 		build::run()
-		return 'app herbouwd'
+		return 'app rebuilt'
 	}
 	if ($command === 'ws-restart'){
 		@shell_exec('HOME=/var/lib/frankenphp /usr/local/bin/pm2 restart websocket 2>&1')
-		return 'websocket herstart'
+		return 'websocket restarted'
 	}
-	return 'onbekende actie'
+	return 'unknown action'
 }
 
 static authManage($command, $app = void){
@@ -494,22 +502,22 @@ static authManage($command, $app = void){
 }
 
 static manage($node, $command, $app = void){
-	if (!in_array($command, static::actions())) return ['ok' => false, 'msg' => 'ongeldige actie']
+	if (!in_array($command, static::actions())) return ['ok' => false, 'msg' => 'invalid action']
 	if ($node === 'local') return ['ok' => true, 'msg' => static::runAction($command, $app)]
 	$peer = static::peers()?->$node ?? null
-	if (!$peer) return ['ok' => false, 'msg' => 'onbekende node']
-	if (((string)($peer->mode ?? 'pull')) !== 'pull') return ['ok' => false, 'msg' => 'niet beschikbaar voor headless node']
+	if (!$peer) return ['ok' => false, 'msg' => 'unknown node']
+	if (((string)($peer->mode ?? 'pull')) !== 'pull') return ['ok' => false, 'msg' => 'not available for headless node']
 	$url = (string)($peer->url ?? void)
 	$secret = (string)($peer->secret ?? void)
-	if ($url === void || $secret === void) return ['ok' => false, 'msg' => 'geen creds']
+	if ($url === void || $secret === void) return ['ok' => false, 'msg' => 'no creds']
 	$time = (string)time()
 	$headers = ['X-Fleet-Time: '.$time, 'X-Fleet-Sign: '.hash_hmac('sha256', $time.'.'.$command.'.'.(string)$app, $secret)]
 	try {
 		$res = json_decode((string)HTTP($url.'/api/manage', $headers, true, ['command' => $command, 'app' => (string)$app]), true)
-		return is_array($res) ? $res : ['ok' => false, 'msg' => 'geen antwoord']
+		return is_array($res) ? $res : ['ok' => false, 'msg' => 'no response']
 	}
 	catch (\Throwable $e){
-		return ['ok' => false, 'msg' => 'node onbereikbaar']
+		return ['ok' => false, 'msg' => 'node unreachable']
 	}
 }
 
@@ -571,10 +579,10 @@ route POST api manage {
 route async POST manage $node $command $app= {
 	$app ??= ''
 	$res = fleet::manage($node, $command, $app)
-	if (!($res['ok'] ?? false)) return apply(error: ($res['msg'] ?? 'mislukt'))
+	if (!($res['ok'] ?? false)) return apply(error: ($res['msg'] ?? 'failed'))
 	if ($command === 'errors-reset'){
 		fleet::clearCachedErrors($node, $app)
-		return apply(toast: '✓ '.($res['msg'] ?? 'gewist'), outer: ['.dash' => overview::errorsView($node, $app)])
+		return apply(toast: '✓ '.($res['msg'] ?? 'cleared'), outer: ['.dash' => overview::errorsView($node, $app)])
 	}
-	return apply(toast: '✓ '.($res['msg'] ?? 'klaar'))
+	return apply(toast: '✓ '.($res['msg'] ?? 'done'))
 }

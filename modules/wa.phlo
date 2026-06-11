@@ -1,4 +1,4 @@
-@ summary: WhatsApp publish-proxy - secret-gated send (POST) + read (GET) naar de lokale phloWA-engine(s). Cross-host endpoint voor WhatsApp-apps.
+@ summary: WhatsApp publish proxy. Secret-gated send (POST) and read (GET) to the local phloWA engine(s). Cross-host endpoint for WhatsApp apps.
 @ requires: HTTP
 
 static sendActions => ['text', 'image', 'audio', 'document', 'location', 'poll', 'reaction', 'read', 'voice']
@@ -16,7 +16,7 @@ static instances {
 static status($port, $secret){
 	try {
 		$res = @json_decode(HTTP('http://127.0.0.1:'.$port.'/status', ['secret: '.$secret]), true)
-		return is_array($res) ? (string)($res['status'] ?? 'onbekend') : 'offline'
+		return is_array($res) ? (string)($res['status'] ?? 'unknown') : 'offline'
 	}
 	catch (\Throwable $e){
 		return 'offline'
@@ -25,8 +25,8 @@ static status($port, $secret){
 
 route POST api wa $instance $action {
 	$inst = static::instances()[$instance] ?? null
-	if (!$inst) return error('Onbekende instance', 404)
-	if (!in_array($action, static::sendActions())) return error('Ongeldige actie', 400)
+	if (!$inst) return error('Unknown instance', 404)
+	if (!in_array($action, static::sendActions())) return error('Invalid action', 400)
 	$secret = (string)($_SERVER['HTTP_SECRET'] ?? void)
 	if ($secret === void || !hash_equals($inst['secret'], $secret)) return error('Unauthorized', 401)
 	$body = (string)file_get_contents('php://input')
@@ -37,8 +37,8 @@ route POST api wa $instance $action {
 
 route GET api wa $instance $action {
 	$inst = static::instances()[$instance] ?? null
-	if (!$inst) return error('Onbekende instance', 404)
-	if (!in_array($action, static::readActions())) return error('Ongeldige actie', 400)
+	if (!$inst) return error('Unknown instance', 404)
+	if (!in_array($action, static::readActions())) return error('Invalid action', 400)
 	$secret = $_SERVER['HTTP_SECRET'] ?? void
 	if ($secret === void || !hash_equals($inst['secret'], $secret)) return error('Unauthorized', 401)
 	%res->type = 'application/json'
