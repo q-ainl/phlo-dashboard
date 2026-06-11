@@ -1,5 +1,5 @@
 @ extends: DB
-@ summary: Adminer-like database admin for MySQL (per-session login) and SQLite (.db files from data/). Browse, structure/schema management, rows, SQL console, import/export. Admin-only.
+@ summary: Database manager for MySQL (per-session login) and SQLite (.db files from data/). Browse, structure and schema management, rows, SQL console, import and export. Admin-only.
 
 # MySQL connection (self): per-session creds, no dbname; queries qualify `db`.`table`. SQLite goes through the Phlo SQLite resource (static::db()).
 prop PDO => dbadmin::connectMysql(static::creds())

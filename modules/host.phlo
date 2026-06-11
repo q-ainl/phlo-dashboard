@@ -30,7 +30,7 @@ view:
 			</a>
 		</if>
 		<if $this->database>
-			<a.host-database href="/q/adminer.php?db=$this->database" target=_blank title="Open $this->database">
+			<a.host-database.async href="/dbadmin" title="Open database manager">
 				<svg xmlns=http://www.w3.org/2000/svg width=12 height=12 viewBox="0 0 16 16" fill=currentColor><path d="M8 1c-3.866 0-7 1.343-7 3s3.134 3 7 3 7-1.343 7-3-3.134-3-7-3zM1 8c0 1.657 3.134 3 7 3s7-1.343 7-3v-2c0 1.657-3.134 3-7 3s-7-1.343-7-3v2zM1 12c0 1.657 3.134 3 7 3s7-1.343 7-3v-2c0 1.657-3.134 3-7 3s-7-1.343-7-3v2z"></svg>
 				<span.database-name>$this->database</span>
 				<span.database-size>{{ size_human(site::databases()[$this->database] ?? 0) }}</span>

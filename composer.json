@@ -1,9 +1,9 @@
 {
     "name": "phlo/dashboard",
-    "description": "Phlo Dashboard: admin and monitoring for the Phlo stack. Fleet monitoring, notifications, WhatsApp, subscriptions and an Adminer-like database admin (MySQL + SQLite).",
+    "description": "Control center for a Phlo deployment: monitor your fleet, manage MySQL and SQLite databases from the browser, and handle notifications, subscriptions and WhatsApp from one place.",
     "type": "project",
     "license": "MIT",
-    "keywords": ["phlo", "dashboard", "admin", "monitoring", "frankenphp", "database", "adminer"],
+    "keywords": ["phlo", "dashboard", "monitoring", "fleet", "database", "mysql", "sqlite"],
     "homepage": "https://github.com/q-ainl/phlo-dashboard",
     "authors": [
         {
