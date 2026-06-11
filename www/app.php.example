@@ -1,15 +1,16 @@
 <?php
 # Node-local bootstrap. Copy to www/app.php and fill in your own host and paths.
-# Niet in git: elke node heeft z'n eigen www/app.php (zie .gitignore).
-require('/srv/control/phlo/phlo.php');
+# Not tracked in git: every node has its own www/app.php (see .gitignore).
+# Composer install: require the engine from vendor. Source checkout: point at phlo.php directly.
+require(is_file(__DIR__.'/../vendor/phlo/tech/phlo.php') ? __DIR__.'/../vendor/phlo/tech/phlo.php' : __DIR__.'/../../phlo/phlo.php');
 phlo_app (
 	id: 'Dashboard',
-	host: 'dashboard.example.tld',   # jouw dashboard-host
+	host: 'dashboard.example.tld',   # your dashboard host
 	auth: false,
 	build: false,                    # dev: true, prod: false
 	debug: false,                    # dev: true, prod: false
 	# control: 'phlo',               # /phlo Control tool; dev/build default is 'phlo', so this line may be omitted
-	app: '/srv/control/dashboard/',  # pad per node aanpassen (sommige nodes wijken af)
+	app: __DIR__.'/../',             # app root (override per node if it differs)
 	websocket: 3001,
 	files: '/srv/control/files/',
 	images: '/srv/control/files/images/',

@@ -1,23 +1,64 @@
 static peers => %creds->fleet ?? null
 
-static authPeer {
+# Shared HMAC peer authentication. The request carries X-Fleet-Time + X-Fleet-Sign; we rebuild the signed
+# payload from the timestamp via $payload($time) and compare against each peer secret. $require optionally
+# limits to peers with that flag set to '1' (e.g. 'manage'). Returns the matching peer name or false.
+static verifyPeer($payload, $require = null){
 	$time = (int)($_SERVER['HTTP_X_FLEET_TIME'] ?? 0)
 	$sign = (string)($_SERVER['HTTP_X_FLEET_SIGN'] ?? void)
 	if (!$time || $sign === void || abs(time() - $time) > 300) return false
 	$peers = static::peers()
 	if (!$peers) return false
 	foreach ($peers AS $name => $peer){
+		if ($require !== null && ((string)($peer->$require ?? void)) !== '1') continue
 		$secret = (string)($peer->secret ?? void)
 		if ($secret === void) continue
-		if (hash_equals(hash_hmac('sha256', (string)$time, $secret), $sign)) return $name
+		if (hash_equals(hash_hmac('sha256', (string)$payload($time), $secret), $sign)) return $name
 	}
 	return false
 }
+
+# Builds the X-Fleet-Time + X-Fleet-Sign request headers. The signed payload is the timestamp, optionally
+# suffixed with '.'.$extra (mirrors the verifyPeer payloads on the receiving side).
+static signHeaders($secret, $extra = ''){
+	$t = (string)time()
+	$payload = $extra !== '' ? $t.'.'.$extra : $t
+	return ['X-Fleet-Time: '.$t, 'X-Fleet-Sign: '.hash_hmac('sha256', $payload, $secret)]
+}
+
+# Raw parse of this node's own creds.ini (plain array, password as string for direct PDO use).
+static localCreds {
+	$ini = @parse_ini_file(static::base().'/dashboard/data/creds.ini', true, INI_SCANNER_RAW)
+	return is_array($ini) ? $ini : []
+}
+
+# Renders a JSON response with the standard flags and an optional status code.
+static jsonOut($data, $code = 200){
+	%res->type = 'application/json'
+	%res->body = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+	return %res->render($code)
+}
+
+static authPeer => static::verifyPeer(fn($t) => (string)$t)
 
 static feedData => static::collect()
 
 # Control base (the directory that contains this dashboard): /srv/control or /files/Server/control, derived from app.
 static base => dirname(rtrim(app, '/'))
+
+# System Caddy sites that are infrastructure, not deployable apps: hidden from app/site listings.
+# Override per node with a comma list in creds.ini ([hiddenSites] is not a section; use hiddenSites = a, b, c).
+static hiddenSites {
+	$cfg = (string)(%creds->hiddenSites ?? void)
+	$list = $cfg !== void ? array_values(array_filter(loop(explode(',', $cfg), fn($s) => trim($s)), 'strlen')) : []
+	return $list ?: ['control', 'whatsapp']
+}
+
+# OS user/group that should own files written by the runtime (best-effort chown). Configurable per node.
+static webUser => (string)(%creds->node?->webuser ?? 'frankenphp')
+
+# Shell command that restarts the local WhatsApp websocket worker. Configurable per node.
+static wsRestart => (string)(%creds->whatsapp?->restart ?? 'HOME=/var/lib/frankenphp /usr/local/bin/pm2 restart websocket 2>&1')
 
 static env($block){
 	if (str_contains($block, 'phlo_dev')) return 'dev'
@@ -28,7 +69,7 @@ static env($block){
 # Apps + hosts from the Caddy sites: per block primary host (shortest non-www) + aliases + env.
 static caddyApps {
 	$apps = []
-	$skip = ['us', 'control', 'whatsapp']
+	$skip = static::hiddenSites()
 	foreach (glob(static::base().'/sites/*.caddy') AS $file){
 		$appName = basename($file, '.caddy')
 		if (in_array($appName, $skip, true)) continue
@@ -56,7 +97,7 @@ static caddyApps {
 			}
 			if (!$hostnames) continue
 			# Redirect-aware: hosts redirected within the block via an @host matcher do not count
-			# as canonical (so jordiboerman.nl wins over jordi.nu, prestige over dblegaltax). A block that
+			# as canonical (so the redirect target wins over the alias that points at it). A block that
 			# redirects as a whole (bare redir, no matcher) = redirect-only → flag (not a real app host).
 			$redirected = []
 			$pureRedirect = false
@@ -159,8 +200,7 @@ static collect {
 	$buildTs = 0
 	foreach ($engineFiles AS $ef) $buildTs = max($buildTs, (int)@filemtime($ef))
 	$build = $buildTs ? date('Y-m-d H:i', $buildTs) : '?'
-	$ini = @parse_ini_file(static::base().'/dashboard/data/creds.ini', true, INI_SCANNER_RAW)
-	$visitors = static::visitors(is_array($ini) ? ($ini['mysql'] ?? null) : null)
+	$visitors = static::visitors(static::localCreds()['mysql'] ?? null)
 	return [
 		'server' => gethostname(),
 		'phlo' => $version,
@@ -248,14 +288,15 @@ static wrapNode($name, $mode, $data){
 }
 
 # Writes one node cache. Runs as frankenphp, so the cache directly gets the right owner
-# (chown is best-effort, no-op buiten root).
+# (chown is best-effort, no-op outside root).
 static storeNode($name, $data){
 	$dir = data.'fleet'
 	if (!is_dir($dir)) @mkdir($dir, 0775, true)
 	$file = $dir.'/'.$name.'.json'
 	file_put_contents($file, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))
-	@chown($file, 'frankenphp')
-	@chgrp($file, 'frankenphp')
+	$owner = static::webUser()
+	@chown($file, $owner)
+	@chgrp($file, $owner)
 }
 
 # Poll cycle: local node in-process via collect(); pull peers via HMAC GET /api/feed. Then
@@ -270,10 +311,8 @@ static poll {
 			$url = trim((string)($cfg->url ?? ''))
 			$secret = (string)($cfg->secret ?? '')
 			if ($url !== '' && $secret !== ''){
-				$t = (string)time()
-				$headers = ['X-Fleet-Time: '.$t, 'X-Fleet-Sign: '.hash_hmac('sha256', $t, $secret)]
 				try {
-					$data = json_decode((string)HTTP($url.'/api/feed', $headers), true)
+					$data = json_decode((string)HTTP($url.'/api/feed', static::signHeaders($secret)), true)
 				}
 				catch (\Throwable $e){
 					$data = null
@@ -381,9 +420,9 @@ static geoEnrich($pdo, $rows, $ipgeoKey){
 
 # Full visitor report (list + aggregations) from the local DB, served via GET /api/visitors.
 static visitorReport {
-	$ini = @parse_ini_file(static::base().'/dashboard/data/creds.ini', true, INI_SCANNER_RAW)
-	$db = is_array($ini) ? ($ini['mysql'] ?? null) : null
-	$ipgeoKey = is_array($ini) ? (string)($ini['ipgeolocation'] ?? '') : ''
+	$ini = static::localCreds()
+	$db = $ini['mysql'] ?? null
+	$ipgeoKey = (string)($ini['ipgeolocation'] ?? '')
 	if (!is_array($db) || empty($db['host']) || empty($db['database'])) return []
 	try {
 		$pdo = new \PDO('mysql:host='.$db['host'].';dbname='.$db['database'].';charset=utf8mb4', (string)($db['user'] ?? ''), (string)($db['password'] ?? ''), [\PDO::ATTR_TIMEOUT => 5, \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION])
@@ -412,18 +451,7 @@ static visitorReport {
 # Federation: a peer node lets the master authenticate a master user for one of its
 # subdashboards. The node signs time.auth.email.module with its fleet secret; returns the matching node name.
 static authFed($email, $module){
-	$time = (int)($_SERVER['HTTP_X_FLEET_TIME'] ?? 0)
-	$sign = (string)($_SERVER['HTTP_X_FLEET_SIGN'] ?? void)
-	if (!$time || $sign === void || abs(time() - $time) > 300) return false
-	$peers = static::peers()
-	if (!$peers) return false
-	$payload = $time.'.auth.'.(string)$email.'.'.(string)$module
-	foreach ($peers AS $name => $peer){
-		$secret = (string)($peer->secret ?? void)
-		if ($secret === void) continue
-		if (hash_equals(hash_hmac('sha256', $payload, $secret), $sign)) return $name
-	}
-	return false
+	return static::verifyPeer(fn($t) => $t.'.auth.'.(string)$email.'.'.(string)$module)
 }
 
 static label($name){
@@ -479,26 +507,14 @@ static runAction($command, $app = void){
 		return 'app rebuilt'
 	}
 	if ($command === 'ws-restart'){
-		@shell_exec('HOME=/var/lib/frankenphp /usr/local/bin/pm2 restart websocket 2>&1')
+		@shell_exec(static::wsRestart())
 		return 'websocket restarted'
 	}
 	return 'unknown action'
 }
 
 static authManage($command, $app = void){
-	$time = (int)($_SERVER['HTTP_X_FLEET_TIME'] ?? 0)
-	$sign = (string)($_SERVER['HTTP_X_FLEET_SIGN'] ?? void)
-	if (!$time || $sign === void || abs(time() - $time) > 300) return false
-	$peers = static::peers()
-	if (!$peers) return false
-	$payload = $time.'.'.$command.'.'.(string)$app
-	foreach ($peers AS $name => $peer){
-		if (((string)($peer->manage ?? void)) !== '1') continue
-		$secret = (string)($peer->secret ?? void)
-		if ($secret === void) continue
-		if (hash_equals(hash_hmac('sha256', $payload, $secret), $sign)) return $name
-	}
-	return false
+	return static::verifyPeer(fn($t) => $t.'.'.(string)$command.'.'.(string)$app, 'manage')
 }
 
 static manage($node, $command, $app = void){
@@ -510,8 +526,7 @@ static manage($node, $command, $app = void){
 	$url = (string)($peer->url ?? void)
 	$secret = (string)($peer->secret ?? void)
 	if ($url === void || $secret === void) return ['ok' => false, 'msg' => 'no creds']
-	$time = (string)time()
-	$headers = ['X-Fleet-Time: '.$time, 'X-Fleet-Sign: '.hash_hmac('sha256', $time.'.'.$command.'.'.(string)$app, $secret)]
+	$headers = static::signHeaders($secret, (string)$command.'.'.(string)$app)
 	try {
 		$res = json_decode((string)HTTP($url.'/api/manage', $headers, true, ['command' => $command, 'app' => (string)$app]), true)
 		return is_array($res) ? $res : ['ok' => false, 'msg' => 'no response']
@@ -523,57 +538,34 @@ static manage($node, $command, $app = void){
 
 route GET api feed {
 	%security->api
-	%res->type = 'application/json'
-	if (!static::authPeer()){
-		%res->body = json_encode(['error' => 'unauthorized'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
-		return %res->render(401)
-	}
-	%res->body = json_encode(static::feedData(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
-	return %res->render()
+	if (!static::authPeer()) return static::jsonOut(['error' => 'unauthorized'], 401)
+	return static::jsonOut(static::feedData())
 }
 
 route GET api visitors {
 	%security->api
-	%res->type = 'application/json'
-	if (!static::authPeer()){
-		%res->body = json_encode(['error' => 'unauthorized'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
-		return %res->render(401)
-	}
-	%res->body = json_encode(static::visitorReport(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
-	return %res->render()
+	if (!static::authPeer()) return static::jsonOut(['error' => 'unauthorized'], 401)
+	return static::jsonOut(static::visitorReport())
 }
 
 route POST api auth {
 	%security->api
-	%res->type = 'application/json'
 	$email = trim((string)(%payload->email ?? void))
 	$pass = (string)(%payload->password ?? void)
 	$module = trim((string)(%payload->module ?? void))
 	$node = static::authFed($email, $module)
-	if (!$node || !class_exists('user')){
-		%res->body = json_encode(['ok' => false, 'error' => 'unauthorized'])
-		return %res->render(401)
-	}
+	if (!$node || !class_exists('user')) return static::jsonOut(['ok' => false, 'error' => 'unauthorized'], 401)
 	$u = user::verify($email, $pass)
-	if (!$u || !$u->active || !$u->canServer($node) || ($module !== '' && !$u->canModule($module))){
-		%res->body = json_encode(['ok' => false, 'error' => 'denied'])
-		return %res->render()
-	}
-	%res->body = json_encode(['ok' => true, 'user' => ['id' => $u->id, 'name' => $u->displayName, 'email' => $u->email, 'role' => $u->role]], JSON_UNESCAPED_UNICODE)
-	return %res->render()
+	if (!$u || !$u->active || !$u->canServer($node) || ($module !== '' && !$u->canModule($module))) return static::jsonOut(['ok' => false, 'error' => 'denied'])
+	return static::jsonOut(['ok' => true, 'user' => ['id' => $u->id, 'name' => $u->displayName, 'email' => $u->email, 'role' => $u->role]])
 }
 
 route POST api manage {
 	%security->api
-	%res->type = 'application/json'
 	$command = (string)(%payload->command ?? void)
 	$app = (string)(%payload->app ?? void)
-	if (!static::authManage($command, $app) || !in_array($command, static::actions())){
-		%res->body = json_encode(['ok' => false, 'msg' => 'unauthorized'])
-		return %res->render(401)
-	}
-	%res->body = json_encode(['ok' => true, 'msg' => static::runAction($command, $app)])
-	return %res->render()
+	if (!static::authManage($command, $app) || !in_array($command, static::actions())) return static::jsonOut(['ok' => false, 'msg' => 'unauthorized'], 401)
+	return static::jsonOut(['ok' => true, 'msg' => static::runAction($command, $app)])
 }
 
 route async POST manage $node $command $app= {

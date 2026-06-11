@@ -7,7 +7,7 @@ static readActions => ['status', 'qr', 'health']
 
 static instances {
 	$list = []
-	foreach (glob('/srv/control/config/wa*.js') AS $f){
+	foreach (glob(fleet::base().'/config/wa*.js') AS $f){
 		if (preg_match("/\\(\\s*'([a-z0-9]+)'\\s*,\\s*(\\d+)\\s*,\\s*'([^']+)'/", (string)@file_get_contents($f), $m)) $list[$m[1]] = ['port' => (int)$m[2], 'secret' => $m[3]]
 	}
 	return $list

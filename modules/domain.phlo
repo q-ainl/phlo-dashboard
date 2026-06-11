@@ -9,6 +9,16 @@ static pp = 100
 static table = 'domains'
 static order = 'id ASC'
 
+# The primary key is the domain name itself (text), not an auto-increment int (the model default).
+static idType = 'string'
+
+# Registrar options for the select. Override per node with a comma list in creds.ini ([domain] registrars = ...).
+static registrars {
+	$cfg = (string)(%creds->domain?->registrars ?? void)
+	$list = $cfg !== void ? array_values(array_filter(loop(explode(',', $cfg), fn($s) => trim($s)), 'strlen')) : []
+	return $list ?: ['External']
+}
+
 static objFilters = [
 	'mail' => [
 		'title'  => 'With email',
@@ -45,7 +55,7 @@ static schema => arr (
 	registrar: field (
 		type: 'select',
 		title: 'Registrant',
-		options: ['External', 'Name.com', 'Realcloud', 'Strato', 'Squarespace', 'Versio', 'Vimexx', 'Yourhosting'],
+		options: static::registrars(),
 	),
 	mail: field (
 		type: 'bool',

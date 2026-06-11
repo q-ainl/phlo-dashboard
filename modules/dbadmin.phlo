@@ -39,6 +39,34 @@ static connected => (bool)(%session->dbadmin ?? null)
 
 static creds => (array)(%session->dbadmin ?? [])
 
+# Guards every async POST route: admin check, CSRF, and (unless $needConn is false) an active DB session.
+# Returns an apply() error response to short-circuit, or null when the request may proceed.
+static gate($needConn = true){
+	if (!static::guard()) return apply(error: 'No access')
+	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if ($needConn && !static::connected()) return apply(error: 'Not connected to the database')
+	return null
+}
+
+# Renders a GET page: sets the active menu, guards admin + connection, runs $view() and renders it via main().
+# A PDOException becomes an inline error box, or (when $bounce) drops the session and shows the login form again.
+static page($view, $title, $path = null, $bounce = false){
+	%app->active = 'dbadmin'
+	if (!static::guard()) return main('No access to this page.', 'No access')
+	if (!static::connected()) return main(static::loginView(), 'Database')
+	try {
+		$out = $view()
+	}
+	catch (\PDOException $e){
+		if ($bounce){
+			unset(%session->dbadmin)
+			$out = static::loginView($e->getMessage())
+		}
+		else $out = static::errorBox($e->getMessage())
+	}
+	return main($out, $title, path: $path)
+}
+
 static q($sql, ...$args){
 	$pdo = static::dbh()
 	if (!$args) return $pdo->query($sql)
@@ -306,7 +334,7 @@ static tablesView($db){
 		$acts .= tag('a', 'sql', href: static::href('export', $db, $name).'?format=sql', class: 'db-btn mini')
 		$acts .= tag('a', 'csv', href: static::href('export', $db, $name).'?format=csv', class: 'db-btn mini')
 		$cells = tag('td', tag('a', esc($name), href: static::href('table', $db, $name), class: 'async db-name'))
-		$cells .= tag('td', number_format((int)($t['Rows'] ?? 0), 0, ',', '.'), class: 'num')
+		$cells .= tag('td', number_format((int)($t['Rows'] ?? 0)), class: 'num')
 		$cells .= tag('td', esc((string)($t['Engine'] ?? '-')), class: 'muted')
 		$cells .= tag('td', size_human($size, 1), class: 'num')
 		$cells .= tag('td', $acts, class: 'db-acts')
@@ -416,8 +444,8 @@ static browseView($db, $table){
 		$mk = fn($p, $label) => tag('a', $label, href: static::href('table', $db, $table).static::qs($keep + ['sort' => $s['sort'], 'dir' => $s['sort'] !== void ? strtolower($s['dir']) : void, 'page' => $p > 1 ? $p : void]), class: 'async db-btn mini')
 		$pager = tag('div', ($s['page'] > 1 ? $mk($s['page'] - 1, '‹ previous') : void).tag('span', 'page '.$s['page'].' / '.$pages, class: 'db-pageinfo').($s['page'] < $pages ? $mk($s['page'] + 1, 'next ›') : void), class: 'db-pager')
 	}
-	$filterNote = $s['fc'] !== void ? ' (where '.esc($s['fc']).' = “'.esc((string)$s['fv']).'”'.($fkMap ? '' : '').')' : ($s['q'] !== void ? ' (filtered on “'.esc($s['q']).'”)' : void)
-	$sub = number_format($total, 0, ',', '.').' rows'.$filterNote
+	$filterNote = $s['fc'] !== void ? ' (where '.esc($s['fc']).' = “'.esc((string)$s['fv']).'”)' : ($s['q'] !== void ? ' (filtered on “'.esc($s['q']).'”)' : void)
+	$sub = number_format($total).' rows'.$filterNote
 	return tag('div', static::head('📋 '.esc($table), $sub).static::topbar($db, $table).$bar.$notice.static::tableWrap(tag('table', tag('thead', tag('tr', $ths)).tag('tbody', $body), class: 'db-table')).$pager, class: 'dash')
 }
 
@@ -673,7 +701,7 @@ static serverStatusView(){
 	}
 	$keys = ['Uptime', 'Threads_connected', 'Threads_running', 'Connections', 'Aborted_connects', 'Questions', 'Queries', 'Slow_queries', 'Com_select', 'Com_insert', 'Com_update', 'Com_delete', 'Bytes_received', 'Bytes_sent', 'Innodb_rows_read', 'Innodb_buffer_pool_reads']
 	$kpi = void
-	foreach ($keys AS $k) isset($status[$k]) && $kpi .= tag('tr', tag('td', tag('strong', esc($k))).tag('td', number_format((int)$status[$k], 0, ',', '.'), class: 'num'))
+	foreach ($keys AS $k) isset($status[$k]) && $kpi .= tag('tr', tag('td', tag('strong', esc($k))).tag('td', number_format((int)$status[$k]), class: 'num'))
 	$kpiTable = static::tableWrap(tag('table', tag('tbody', $kpi), class: 'db-table'))
 	$vars = void
 	foreach (static::all('SHOW VARIABLES') AS $r){
@@ -737,10 +765,7 @@ static createTableView($db){
 }
 
 static colSpec($db, $table, $colName){
-	foreach (static::columns($db, $table) AS $c){
-		if ((string)$c['Field'] !== (string)$colName) continue
-		return ['name' => $c['Field'], 'type' => $c['Type'], 'null' => ($c['Null'] ?? void) === 'YES', 'default' => $c['Default'], 'auto' => str_contains((string)($c['Extra'] ?? void), 'auto_increment'), 'pk' => ($c['Key'] ?? void) === 'PRI']
-	}
+	foreach (static::columns($db, $table) AS $c) if ((string)$c['Field'] === (string)$colName) return static::colRowSpec($c)
 	return null
 }
 
@@ -868,22 +893,11 @@ static splitSql($sql){
 }
 
 route both GET dbadmin {
-	%app->active = 'dbadmin'
-	if (!static::guard()) return main('No access to this page.', 'No access')
-	if (!static::connected()) return main(static::loginView(), 'Database')
-	try {
-		$out = static::pickerView()
-	}
-	catch (\PDOException $e){
-		unset(%session->dbadmin)
-		$out = static::loginView($e->getMessage())
-	}
-	main($out, 'Database')
+	return static::page(fn() => static::pickerView(), 'Database', null, true)
 }
 
 route async POST dbadmin login {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if ($g = static::gate(false)) return $g
 	$c = ['driver' => 'mysql', 'host' => trim((string)(%payload->host ?? void)) ?: 'localhost', 'user' => trim((string)(%payload->user ?? void)), 'pass' => (string)(%payload->password ?? void)]
 	if ($c['user'] === void) return apply(inner: ['#dbLoginError' => tag('span', 'Enter a username', class: 'db-err')])
 	try {
@@ -897,8 +911,7 @@ route async POST dbadmin login {
 }
 
 route async POST dbadmin sqlite {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if ($g = static::gate(false)) return $g
 	$name = basename((string)(%payload->file ?? void))
 	$files = static::dataFiles()
 	if (!isset($files[$name])) return apply(inner: ['#dbLoginError' => tag('span', 'Unknown file', class: 'db-err')])
@@ -913,68 +926,29 @@ route async POST dbadmin sqlite {
 }
 
 route async POST dbadmin logout {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
+	if ($g = static::gate(false)) return $g
 	unset(%session->dbadmin)
 	return location('/dbadmin')
 }
 
 route both GET dbadmin db $db {
-	%app->active = 'dbadmin'
-	if (!static::guard()) return main('No access to this page.', 'No access')
-	if (!static::connected()) return main(static::loginView(), 'Database')
-	try {
-		$out = static::tablesView($db)
-	}
-	catch (\PDOException $e){
-		$out = static::errorBox($e->getMessage())
-	}
-	main($out, $db)
+	return static::page(fn() => static::tablesView($db), $db)
 }
 
 route both GET dbadmin table $db $table {
-	%app->active = 'dbadmin'
-	if (!static::guard()) return main('No access to this page.', 'No access')
-	if (!static::connected()) return main(static::loginView(), 'Database')
-	try {
-		$out = static::browseView($db, $table)
-	}
-	catch (\PDOException $e){
-		$out = static::errorBox($e->getMessage())
-	}
-	main($out, $table, path: static::currentPath())
+	return static::page(fn() => static::browseView($db, $table), $table, static::currentPath())
 }
 
 route both GET dbadmin structure $db $table {
-	%app->active = 'dbadmin'
-	if (!static::guard()) return main('No access to this page.', 'No access')
-	if (!static::connected()) return main(static::loginView(), 'Database')
-	try {
-		$out = static::structureView($db, $table)
-	}
-	catch (\PDOException $e){
-		$out = static::errorBox($e->getMessage())
-	}
-	main($out, $table.' · structure')
+	return static::page(fn() => static::structureView($db, $table), $table.' · structure')
 }
 
 route both GET dbadmin row $db $table {
-	%app->active = 'dbadmin'
-	if (!static::guard()) return main('No access to this page.', 'No access')
-	if (!static::connected()) return main(static::loginView(), 'Database')
-	try {
-		$out = static::rowView($db, $table)
-	}
-	catch (\PDOException $e){
-		$out = static::errorBox($e->getMessage())
-	}
-	main($out, $table, path: static::currentPath())
+	return static::page(fn() => static::rowView($db, $table), $table, static::currentPath())
 }
 
 route async POST dbadmin row $db $table {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	try {
 		static::checkTable($db, $table)
 		$cols = static::columns($db, $table)
@@ -1005,9 +979,7 @@ route async POST dbadmin row $db $table {
 }
 
 route async POST dbadmin delete $db $table {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	try {
 		static::checkTable($db, $table)
 		$pk = static::pk($db, $table)
@@ -1015,7 +987,7 @@ route async POST dbadmin delete $db $table {
 		parse_str((string)(%payload->key ?? void), $key)
 		$keys = []
 		foreach ($pk AS $k){
-			if (!isset($key[$k])) return apply(error: 'Onvolledige sleutel')
+			if (!isset($key[$k])) return apply(error: 'Incomplete key')
 			$keys[$k] = (string)$key[$k]
 		}
 		static::q('DELETE FROM '.static::rel($db, $table).' WHERE '.loop($pk, fn($k) => static::ident($k).'=?', ' AND ').(static::isSqlite() ? void : ' LIMIT 1'), ...array_values($keys))
@@ -1027,23 +999,11 @@ route async POST dbadmin delete $db $table {
 }
 
 route both GET dbadmin sql $db= {
-	%app->active = 'dbadmin'
-	if (!static::guard()) return main('No access to this page.', 'No access')
-	if (!static::connected()) return main(static::loginView(), 'Database')
-	try {
-		$out = static::sqlView($db ?: null)
-	}
-	catch (\PDOException $e){
-		unset(%session->dbadmin)
-		$out = static::loginView($e->getMessage())
-	}
-	main($out, 'SQL-console')
+	return static::page(fn() => static::sqlView($db ?: null), 'SQL-console', null, true)
 }
 
 route async POST dbadmin sql {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	$sql = trim((string)(%payload->query ?? void))
 	$db = trim((string)(%payload->db ?? void))
 	if ($sql === void) return apply(inner: ['#sqlResult' => static::errorBox('No query provided')])
@@ -1084,37 +1044,17 @@ route async POST dbadmin sql {
 }
 
 route both GET dbadmin privileges {
-	%app->active = 'dbadmin'
-	if (!static::guard()) return main('No access to this page.', 'No access')
-	if (!static::connected()) return main(static::loginView(), 'Database')
-	try {
-		$out = static::privilegesView()
-	}
-	catch (\PDOException $e){
-		$out = static::errorBox($e->getMessage())
-	}
-	main($out, 'Privileges')
+	return static::page(fn() => static::privilegesView(), 'Privileges')
 }
 
 route both GET dbadmin privilege {
-	%app->active = 'dbadmin'
-	if (!static::guard()) return main('No access to this page.', 'No access')
-	if (!static::connected()) return main(static::loginView(), 'Database')
 	$user = (string)(%req->query['user'] ?? void)
 	$host = (string)(%req->query['host'] ?? '%')
-	try {
-		$out = static::privilegeView($user, $host)
-	}
-	catch (\PDOException $e){
-		$out = static::errorBox($e->getMessage())
-	}
-	main($out, $user.'@'.$host, path: static::currentPath())
+	return static::page(fn() => static::privilegeView($user, $host), $user.'@'.$host, static::currentPath())
 }
 
 route async POST dbadmin privilege create {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	$user = trim((string)(%payload->user ?? void))
 	$host = trim((string)(%payload->host ?? void)) ?: '%'
 	$pass = (string)(%payload->password ?? void)
@@ -1130,9 +1070,7 @@ route async POST dbadmin privilege create {
 }
 
 route async POST dbadmin privilege grant {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	$p = %payload->objData
 	$user = (string)($p['user'] ?? void)
 	$host = (string)($p['host'] ?? '%')
@@ -1152,9 +1090,7 @@ route async POST dbadmin privilege grant {
 }
 
 route async POST dbadmin privilege revoke {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	$user = (string)(%payload->u ?? void)
 	$host = (string)(%payload->h ?? void)
 	$hash = (string)(%payload->g ?? void)
@@ -1174,9 +1110,7 @@ route async POST dbadmin privilege revoke {
 }
 
 route async POST dbadmin privilege password {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	$user = (string)(%payload->user ?? void)
 	$host = (string)(%payload->host ?? '%')
 	$pass = (string)(%payload->password ?? void)
@@ -1191,9 +1125,7 @@ route async POST dbadmin privilege password {
 }
 
 route async POST dbadmin privilege drop {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	$user = (string)(%payload->u ?? void)
 	$host = (string)(%payload->h ?? void)
 	try {
@@ -1206,22 +1138,11 @@ route async POST dbadmin privilege drop {
 }
 
 route both GET dbadmin create $db {
-	%app->active = 'dbadmin'
-	if (!static::guard()) return main('No access to this page.', 'No access')
-	if (!static::connected()) return main(static::loginView(), 'Database')
-	try {
-		$out = static::createTableView($db)
-	}
-	catch (\PDOException $e){
-		$out = static::errorBox($e->getMessage())
-	}
-	main($out, 'New table')
+	return static::page(fn() => static::createTableView($db), 'New table')
 }
 
 route async POST dbadmin create $db {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	$p = %payload->objData
 	$table = trim((string)($p['table'] ?? void))
 	if ($table === void) return apply(error: 'Enter a table name')
@@ -1240,9 +1161,7 @@ route async POST dbadmin create $db {
 }
 
 route async POST dbadmin drop $db $table {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	if ((string)(%payload->confirm ?? void) !== (string)$table) return apply(error: 'Type the table name exactly to confirm')
 	try {
 		static::checkTable($db, $table)
@@ -1255,9 +1174,7 @@ route async POST dbadmin drop $db $table {
 }
 
 route async POST dbadmin truncate $db $table {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	if ((string)(%payload->confirm ?? void) !== (string)$table) return apply(error: 'Type the table name exactly to confirm')
 	try {
 		static::checkTable($db, $table)
@@ -1270,9 +1187,7 @@ route async POST dbadmin truncate $db $table {
 }
 
 route async POST dbadmin rename $db $table {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	$new = trim((string)(%payload->newname ?? void))
 	if ($new === void) return apply(error: 'Enter a new name')
 	try {
@@ -1286,23 +1201,12 @@ route async POST dbadmin rename $db $table {
 }
 
 route both GET dbadmin column $db $table {
-	%app->active = 'dbadmin'
-	if (!static::guard()) return main('No access to this page.', 'No access')
-	if (!static::connected()) return main(static::loginView(), 'Database')
 	$col = (string)(%req->query['col'] ?? void) ?: null
-	try {
-		$out = static::columnFormView($db, $table, $col)
-	}
-	catch (\PDOException $e){
-		$out = static::errorBox($e->getMessage())
-	}
-	main($out, 'Column', path: static::currentPath())
+	return static::page(fn() => static::columnFormView($db, $table, $col), 'Column', static::currentPath())
 }
 
 route async POST dbadmin column $db $table {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	$p = %payload->objData
 	$name = trim((string)($p['c0_name'] ?? void))
 	if ($name === void) return apply(error: 'Enter a column name')
@@ -1320,22 +1224,11 @@ route async POST dbadmin column $db $table {
 }
 
 route both GET dbadmin status {
-	%app->active = 'dbadmin'
-	if (!static::guard()) return main('No access to this page.', 'No access')
-	if (!static::connected()) return main(static::loginView(), 'Database')
-	try {
-		$out = static::serverStatusView()
-	}
-	catch (\PDOException $e){
-		$out = static::errorBox($e->getMessage())
-	}
-	main($out, 'Server status')
+	return static::page(fn() => static::serverStatusView(), 'Server status')
 }
 
 route async POST dbadmin kill {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	if (static::isSqlite()) return apply(error: 'Not available for SQLite')
 	$id = (int)(%payload->id ?? 0)
 	try {
@@ -1348,30 +1241,12 @@ route async POST dbadmin kill {
 }
 
 route both GET dbadmin search $db {
-	%app->active = 'dbadmin'
-	if (!static::guard()) return main('No access to this page.', 'No access')
-	if (!static::connected()) return main(static::loginView(), 'Database')
 	$q = trim((string)(%req->query['q'] ?? void))
-	try {
-		$out = static::searchView($db, $q ?: void)
-	}
-	catch (\PDOException $e){
-		$out = static::errorBox($e->getMessage())
-	}
-	main($out, 'Search', path: static::currentPath())
+	return static::page(fn() => static::searchView($db, $q ?: void), 'Search', static::currentPath())
 }
 
 route both GET dbadmin alter $db $table {
-	%app->active = 'dbadmin'
-	if (!static::guard()) return main('No access to this page.', 'No access')
-	if (!static::connected()) return main(static::loginView(), 'Database')
-	try {
-		$out = static::structureEditView($db, $table)
-	}
-	catch (\PDOException $e){
-		$out = static::errorBox($e->getMessage())
-	}
-	main($out, $table.' · edit structure')
+	return static::page(fn() => static::structureEditView($db, $table), $table.' · edit structure')
 }
 
 # Reads columns in DOM order (payload order) so reordering counts.
@@ -1389,9 +1264,7 @@ static alterPlan($p, $current){
 }
 
 route async POST dbadmin alter $db $table {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	$p = %payload->objData
 	try {
 		static::checkTable($db, $table)
@@ -1448,9 +1321,7 @@ route async POST dbadmin alter $db $table {
 }
 
 route async POST dbadmin dropcolumn $db $table {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	$col = trim((string)(%payload->col ?? void))
 	try {
 		static::checkTable($db, $table)
@@ -1463,9 +1334,7 @@ route async POST dbadmin dropcolumn $db $table {
 }
 
 route async POST dbadmin index $db $table {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	$type = strtoupper(trim((string)(%payload->type ?? 'INDEX')))
 	in_array($type, ['INDEX', 'UNIQUE', 'FULLTEXT', 'PRIMARY']) || $type = 'INDEX'
 	$name = trim((string)(%payload->name ?? void))
@@ -1493,9 +1362,7 @@ route async POST dbadmin index $db $table {
 }
 
 route async POST dbadmin dropindex $db $table {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	$name = trim((string)(%payload->name ?? void))
 	try {
 		static::checkTable($db, $table)
@@ -1515,9 +1382,7 @@ route async POST dbadmin dropindex $db $table {
 }
 
 route async POST dbadmin fk $db $table {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	$p = %payload->objData
 	$col = trim((string)($p['col'] ?? void))
 	$rdb = trim((string)($p['rdb'] ?? void))
@@ -1539,9 +1404,7 @@ route async POST dbadmin fk $db $table {
 }
 
 route async POST dbadmin dropfk $db $table {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	$name = trim((string)(%payload->name ?? void))
 	try {
 		static::checkTable($db, $table)
@@ -1554,9 +1417,7 @@ route async POST dbadmin dropfk $db $table {
 }
 
 route async POST dbadmin import $db {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	$file = %payload->sqlfile ?? null
 	if (!is_object($file)) return apply(inner: ['#importResult' => static::errorBox('No file received')])
 	$sql = (string)$file->contents
@@ -1587,9 +1448,7 @@ route async POST dbadmin import $db {
 }
 
 route async POST dbadmin createdatabase {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	$name = trim((string)(%payload->name ?? void))
 	if ($name === void) return apply(error: 'Enter a database name')
 	try {
@@ -1602,9 +1461,7 @@ route async POST dbadmin createdatabase {
 }
 
 route async POST dbadmin dropdatabase $db {
-	if (!static::guard()) return apply(error: 'No access')
-	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
-	if (!static::connected()) return apply(error: 'Not connected to the database')
+	if ($g = static::gate()) return $g
 	if ((string)(%payload->confirm ?? void) !== (string)$db) return apply(error: 'Type the database name exactly to confirm')
 	try {
 		static::q('DROP DATABASE '.static::ident($db))

@@ -1,10 +1,9 @@
-prop hiddenSites = ['control', 'whatsapp']
-
 route both GET sites {
-	$sites = files('/srv/control/sites/', '*.caddy')
+	$sites = files(fleet::base().'/sites/', '*.caddy')
+	$hidden = fleet::hiddenSites()
 	$return = []
 	foreach ($sites AS $site){
-		if (in_array($name = basename($site, '.caddy'), $this->hiddenSites)) continue
+		if (in_array($name = basename($site, '.caddy'), $hidden)) continue
 		$conf = file_get_contents($site)
 		$hosts = regex_all('~(?(DEFINE)(?<B>\{(?:[^{}]+|(?&B))*\}))^(?![\s(@#])[^\n{}]*?\s*(?&B)~ms', $conf)[0]
 		$hosts = loop($hosts, fn($host) => %host(ltrim(strtr($host, [lf.tab => lf]))))

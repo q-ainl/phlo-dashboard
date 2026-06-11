@@ -6,7 +6,11 @@ view: $this->title
 static table = 'messages'
 static order = 'created DESC'
 
-static levelCls($level) => ['error' => 'error', 'warn' => 'warn', 'order' => 'emerald', 'payment' => 'emerald', 'user' => 'blue'][(string)$level] ?? 'muted'
+# Category colour by message type (matches emoji/label below).
+static typeCls($type) => ['user' => 'blue', 'payment' => 'emerald', 'order' => 'emerald'][(string)$type] ?? 'muted'
+
+# Card/badge colour: severity (level) wins, otherwise the category (type).
+static cls($level, $type) => (string)$level === 'error' ? 'error' : ((string)$level === 'warn' ? 'warn' : static::typeCls($type))
 
 static emoji($type) => ['user' => '🧍', 'payment' => '🪙', 'order' => '🛒', 'error' => '⚠️', 'warn' => '⚠️', 'info' => '🔔'][(string)$type] ?? '🔔'
 
@@ -34,9 +38,9 @@ static inbox(){
 	$msgs = static::feed()
 	$rows = void
 	foreach ($msgs AS $m){
-		$cls = static::levelCls($m->level)
+		$cls = static::cls($m->level, $m->type)
 		$src = tag('span', overview::icon('server', 12, 'muted').tag('span', $m->server), class: 'msg-src').tag('span', $m->app, class: 'msg-app').tag('span', age_human(time() - (int)$m->created).' ago', class: 'msg-time')
-		$line = tag('span', $m->type, class: 'msg-badge '.$cls).tag('span', esc((string)$m->title), class: 'msg-title')
+		$line = tag('span', static::emoji((string)$m->type).' '.static::label((string)$m->type), class: 'msg-badge '.$cls).tag('span', esc((string)$m->title), class: 'msg-title')
 		$body = trim((string)$m->body) !== '' ? tag('p', esc((string)$m->body), class: 'msg-body') : void
 		$rows .= tag('div', tag('div', $src, class: 'msg-head').tag('div', $line, class: 'msg-line').$body, class: 'msg-card '.$cls.($m->read_at ? '' : ' unread'))
 	}
@@ -48,7 +52,11 @@ route both GET messages {
 	%app->active = 'message'
 	$out = static::inbox()
 	$u = auth::user()
-	if ($u) foreach (message::records(read_at: null, limit: 200) AS $m) if ($u->canServer((string)$m->server)) message::change('id=?', $m->id, read_at: time())
+	if ($u){
+		$ids = []
+		foreach (message::records(read_at: null, limit: 200) AS $m) if ($u->canServer((string)$m->server)) $ids[] = $m->id
+		$ids && message::change('read_at IS NULL AND id IN ('.implode(comma, array_fill(0, count($ids), qm)).')', ...$ids, read_at: time())
+	}
 	main($out, 'Notifications')
 }
 
