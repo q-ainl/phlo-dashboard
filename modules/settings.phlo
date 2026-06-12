@@ -1,4 +1,0 @@
-route both GET settings {
-	%app->active = 'settings'
-	main(phlo('CMS_settings'), 'Settings')
-}
