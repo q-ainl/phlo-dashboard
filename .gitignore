@@ -4,7 +4,7 @@
 .local/
 .agents/
 
-# Node-lokale config (elke node z'n eigen - kopieer van *.example)
+# Node-local config (each node keeps its own - copy from *.example)
 www/app.php
 data/app.json
 data/app.md
