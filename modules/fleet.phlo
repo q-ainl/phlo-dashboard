@@ -57,7 +57,7 @@ static hiddenSites {
 # OS user/group that should own files written by the runtime (best-effort chown). Configurable per node.
 static webUser => (string)(%creds->node?->webuser ?? 'frankenphp')
 
-# Shell command that restarts the local WhatsApp websocket worker. Configurable per node.
+# Shell command that restarts the local realtime websocket server (pm2). Configurable per node.
 static wsRestart => (string)(%creds->whatsapp?->restart ?? 'HOME=/var/lib/frankenphp /usr/local/bin/pm2 restart websocket 2>&1')
 
 static env($block){

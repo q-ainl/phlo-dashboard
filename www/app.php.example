@@ -11,7 +11,6 @@ phlo_app (
 	debug: false,                    # dev: true, prod: false
 	# control: 'phlo',               # /phlo Control tool; dev/build default is 'phlo', so this line may be omitted
 	app: __DIR__.'/../',             # app root (override per node if it differs)
-	websocket: 3001,
 	files: '/srv/control/files/',
 	images: '/srv/control/files/images/',
 	thumbs: '/srv/control/files/thumbs/',
