@@ -34,7 +34,7 @@ static unread {
 	return $n
 }
 
-static inbox(){
+static inbox {
 	$msgs = static::feed()
 	$rows = void
 	foreach ($msgs AS $m){
