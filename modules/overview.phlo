@@ -259,9 +259,9 @@ route both GET node $node {
 }
 
 <script>
-on('input', 'input.flt', (el) => {
+on('input', 'input.flt', el => {
 	let q = el.value.toLowerCase()
-	objects('tr[data-filter]').forEach((row) => row.style.display = row.dataset.filter.indexOf(q) < 0 ? 'none' : '')
+	objects('tr[data-filter]').forEach(row => row.style.display = row.dataset.filter.indexOf(q) < 0 ? 'none' : '')
 })
 
 </script>

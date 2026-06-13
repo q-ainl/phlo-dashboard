@@ -1504,7 +1504,7 @@ on('submit', 'form.db-search', (form, e) => {
 	let qs = new URLSearchParams(new FormData(form)).toString()
 	app.get(form.dataset.path + (qs ? '?' + qs : ''))
 })
-on('input', '.db-fctl input, .db-fctl textarea, .db-fctl select', (el) => {
+on('input', '.db-fctl input, .db-fctl textarea, .db-fctl select', el => {
 	if (el.type === 'checkbox') return
 	let box = el.closest('.db-fctl')?.querySelector('.db-null-toggle input')
 	box && (box.checked = false)
@@ -1512,27 +1512,27 @@ on('input', '.db-fctl input, .db-fctl textarea, .db-fctl select', (el) => {
 on('click', '#dbAddCol', () => {
 	let cols = obj('#dbCols'), n = cols.querySelectorAll('.db-col-row').length
 	let row = obj('#dbColTpl').querySelector('.db-col-row').cloneNode(true)
-	row.querySelectorAll('[name]').forEach((el) => el.name = el.name.replace('IDX', n))
+	row.querySelectorAll('[name]').forEach(el => el.name = el.name.replace('IDX', n))
 	cols.appendChild(row)
 })
-on('input', '.db-confirm-input', (el) => {
+on('input', '.db-confirm-input', el => {
 	let btn = el.closest('form').querySelector('button[type=submit]')
 	btn && (btn.disabled = el.value !== el.dataset.expect)
 })
-on('click', '.db-row-up', (b) => {
+on('click', '.db-row-up', b => {
 	let row = b.closest('.db-col-row'), prev = row.previousElementSibling
 	prev && prev.classList.contains('db-col-row') && row.parentNode.insertBefore(row, prev)
 })
-on('click', '.db-row-down', (b) => {
+on('click', '.db-row-down', b => {
 	let row = b.closest('.db-col-row'), next = row.nextElementSibling
 	next && next.classList.contains('db-col-row') && row.parentNode.insertBefore(next, row)
 })
-on('click', '.db-row-del', (b) => b.closest('.db-col-row').remove())
+on('click', '.db-row-del', b => b.closest('.db-col-row').remove())
 on('dragstart', '.db-cols-sortable .db-col-row', (row, e) => {
 	phlo.dragRow = row
 	row.classList.add('db-dragging')
 })
-on('dragend', '.db-cols-sortable .db-col-row', (row) => {
+on('dragend', '.db-cols-sortable .db-col-row', row => {
 	row.classList.remove('db-dragging')
 	phlo.dragRow = null
 })
@@ -1541,7 +1541,7 @@ on('dragover', '.db-cols-sortable', (list, e) => {
 	let drag = phlo.dragRow
 	if (!drag) return
 	let after = null
-	list.querySelectorAll('.db-col-row:not(.db-dragging)').forEach((r) => {
+	list.querySelectorAll('.db-col-row:not(.db-dragging)').forEach(r => {
 		let box = r.getBoundingClientRect()
 		if (e.clientY > box.top + box.height / 2) after = r
 	})
