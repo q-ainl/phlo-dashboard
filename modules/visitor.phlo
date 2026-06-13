@@ -58,8 +58,13 @@ static rowObject($row){
 
 static records(...$args){
 	$rows = static::report()['recent'] ?? []
-	$limit = (int)($args['limit'] ?? 0)
-	if ($limit > 0) $rows = array_slice($rows, (int)($args['offset'] ?? 0), $limit)
+	# CMS pagination sends limit as the MySQL "offset,count" string; honour that as well as a plain count + offset arg.
+	if (($limit = (string)($args['limit'] ?? '')) !== ''){
+		$parts = explode(comma, $limit)
+		$offset = count($parts) === 2 ? (int)$parts[0] : (int)($args['offset'] ?? 0)
+		$count = (int)end($parts)
+		if ($count > 0) $rows = array_slice($rows, $offset, $count)
+	}
 	$out = []
 	foreach ($rows AS $i => $row) $out[$row['id'] ?? $i] = static::rowObject($row)
 	return $out

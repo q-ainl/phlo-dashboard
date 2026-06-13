@@ -55,11 +55,3 @@ if (phlo_exists('auth')){
 return %res->render(404)
 
 view head: %CSRF
-
-<style>
-:root {
-	font-family: system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif
-	scroll-behavior: smooth
-}
-dialog p: white-space: pre-wrap
-</style>
