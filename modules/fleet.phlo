@@ -32,12 +32,6 @@ static localCreds {
 	return is_array($ini) ? $ini : []
 }
 
-# Renders a JSON response with the standard flags and an optional status code.
-static jsonOut($data, $code = 200){
-	%res->type = 'application/json'
-	%res->body = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
-	return %res->render($code)
-}
 
 static authPeer => static::verifyPeer(fn($t) => (string)$t)
 
@@ -538,14 +532,14 @@ static manage($node, $command, $app = void){
 
 route GET api feed {
 	%security->api
-	if (!static::authPeer()) return static::jsonOut(['error' => 'unauthorized'], 401)
-	return static::jsonOut(static::feedData())
+	if (!static::authPeer()) return output(['error' => 'unauthorized'], code: 401)
+	return output(static::feedData())
 }
 
 route GET api visitors {
 	%security->api
-	if (!static::authPeer()) return static::jsonOut(['error' => 'unauthorized'], 401)
-	return static::jsonOut(static::visitorReport())
+	if (!static::authPeer()) return output(['error' => 'unauthorized'], code: 401)
+	return output(static::visitorReport())
 }
 
 route POST api auth {
@@ -554,18 +548,18 @@ route POST api auth {
 	$pass = (string)(%payload->password ?? void)
 	$module = trim((string)(%payload->module ?? void))
 	$node = static::authFed($email, $module)
-	if (!$node || !class_exists('user')) return static::jsonOut(['ok' => false, 'error' => 'unauthorized'], 401)
+	if (!$node || !class_exists('user')) return output(['ok' => false, 'error' => 'unauthorized'], code: 401)
 	$u = user::verify($email, $pass)
-	if (!$u || !$u->active || !$u->canServer($node) || ($module !== '' && !$u->canModule($module))) return static::jsonOut(['ok' => false, 'error' => 'denied'])
-	return static::jsonOut(['ok' => true, 'user' => ['id' => $u->id, 'name' => $u->displayName, 'email' => $u->email, 'role' => $u->role]])
+	if (!$u || !$u->active || !$u->canServer($node) || ($module !== '' && !$u->canModule($module))) return output(['ok' => false, 'error' => 'denied'])
+	return output(['ok' => true, 'user' => ['id' => $u->id, 'name' => $u->displayName, 'email' => $u->email, 'role' => $u->role]])
 }
 
 route POST api manage {
 	%security->api
 	$command = (string)(%payload->command ?? void)
 	$app = (string)(%payload->app ?? void)
-	if (!static::authManage($command, $app) || !in_array($command, static::actions())) return static::jsonOut(['ok' => false, 'msg' => 'unauthorized'], 401)
-	return static::jsonOut(['ok' => true, 'msg' => static::runAction($command, $app)])
+	if (!static::authManage($command, $app) || !in_array($command, static::actions())) return output(['ok' => false, 'msg' => 'unauthorized'], code: 401)
+	return output(['ok' => true, 'msg' => static::runAction($command, $app)])
 }
 
 route async POST manage $node $command $app= {

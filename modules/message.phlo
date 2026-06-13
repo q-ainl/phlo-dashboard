@@ -80,9 +80,7 @@ route POST api notify {
 		created: time(),
 	)
 	phlo_exists('subscription') && subscription::dispatch($m)
-	%res->type = 'application/json'
-	%res->body = json_encode(['ok' => true, 'id' => $m->id], JSON_UNESCAPED_SLASHES)
-	return %res->render()
+	return output(['ok' => true, 'id' => $m->id])
 }
 
 static schema => arr (

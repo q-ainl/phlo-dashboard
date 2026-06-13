@@ -30,9 +30,7 @@ route POST api wa $instance $action {
 	$secret = (string)($_SERVER['HTTP_SECRET'] ?? void)
 	if ($secret === void || !hash_equals($inst['secret'], $secret)) return error('Unauthorized', 401)
 	$body = (string)file_get_contents('php://input')
-	%res->type = 'application/json'
-	%res->body = (string)HTTP('http://127.0.0.1:'.$inst['port'].'/'.$action, ['secret: '.$inst['secret']], true, $body)
-	return %res->render()
+	return output((string)HTTP('http://127.0.0.1:'.$inst['port'].'/'.$action, ['secret: '.$inst['secret']], true, $body), type: 'application/json')
 }
 
 route GET api wa $instance $action {
@@ -41,7 +39,5 @@ route GET api wa $instance $action {
 	if (!in_array($action, static::readActions())) return error('Invalid action', 400)
 	$secret = $_SERVER['HTTP_SECRET'] ?? void
 	if ($secret === void || !hash_equals($inst['secret'], $secret)) return error('Unauthorized', 401)
-	%res->type = 'application/json'
-	%res->body = HTTP('http://127.0.0.1:'.$inst['port'].'/'.$action, ['secret: '.$inst['secret']])
-	return %res->render()
+	return output((string)HTTP('http://127.0.0.1:'.$inst['port'].'/'.$action, ['secret: '.$inst['secret']]), type: 'application/json')
 }

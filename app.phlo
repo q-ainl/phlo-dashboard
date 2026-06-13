@@ -48,8 +48,6 @@ if (phlo_exists('auth')){
 	if (%req->method !== 'GET') return apply(error: 'Invalid request')
 	return main('Page not found!')
 }
-%res->type = 'application/json'
-%res->body = json_encode(['error' => 'not found'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
-return %res->render(404)
+return output(['error' => 'not found'], code: 404)
 
 view head: %CSRF
