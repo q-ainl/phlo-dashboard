@@ -9,9 +9,7 @@ prop model = 'gpt-4o-mini'
 prop publicPaths = ['api']
 
 prop models => array_values(array_filter(['visitor', 'domain', 'user', 'subscription'], fn($m) => phlo_exists($m)))
-prop menu => $this->navMenu
-
-method navMenu {
+prop menu {
 	$u = auth::user()
 	if (!$u) return []
 	$full = [
