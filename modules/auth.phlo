@@ -82,13 +82,22 @@ static check {
 	unset(%session->user)
 	unset(%session->name)
 	unset(%session->fed)
+	%session->returnTo = trim((string)%req->path, '/')
 	return view(phlo('auth')->loginPage, 'Login', css: static::themeCss())
+}
+
+# After a successful login, return to the page the user was gated on; otherwise the home view.
+static afterLogin {
+	$to = trim((string)(%session->returnTo ?? void), '/')
+	unset(%session->returnTo)
+	return $to !== void && !static::publicPath($to) ? location(slash.$to) : static::home()
 }
 
 static logout {
 	unset(%session->user)
 	unset(%session->name)
 	unset(%session->fed)
+	unset(%session->returnTo)
 	return view(phlo('auth')->loginPage, 'Login', css: static::themeCss())
 }
 
@@ -106,7 +115,7 @@ route async POST login {
 			if ($u = user::verify($email, $pass)){
 				%session->user = $u->id
 				%session->name = $u->displayName
-				return static::home()
+				return static::afterLogin()
 			}
 		}
 		catch (\Throwable $e){
@@ -116,13 +125,13 @@ route async POST login {
 	if (static::verifyIni($email, $pass)){
 		%session->user = 'root'
 		%session->name = 'root'
-		return static::home()
+		return static::afterLogin()
 	}
 	if ($fed = static::fedAuth($email, $pass)){
 		%session->user = (string)($fed['id'] ?? $email)
 		%session->name = (string)($fed['name'] ?? $email)
 		%session->fed = 1
-		return static::home()
+		return static::afterLogin()
 	}
 	return apply(inner: ['#loginError' => tag('span', 'Unknown combination of email and password', class: 'login-err')])
 }
