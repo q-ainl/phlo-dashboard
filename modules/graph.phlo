@@ -77,8 +77,8 @@ static graphData {
 				'code' => (int)($a['code'] ?? 0),
 				'ms' => (int)($a['ms'] ?? 0),
 				'vis' => $vis,
-				'err' => (int)($errors[$app]['occurrences'] ?? 0),
-				'errLatest' => (string)($errors[$app]['latest'] ?? ''),
+				'err' => (int)($errors[$app]['byHost'][$host]['occurrences'] ?? 0),
+				'errLatest' => (string)($errors[$app]['byHost'][$host]['latest'] ?? ''),
 				'notif' => (int)($msg[$app] ?? 0),
 			]
 			$edges[] = ['from' => $sid, 'to' => $hid, 'kind' => 'host']

@@ -97,7 +97,7 @@ static hostRows($node, $feed){
 		$app = (string)($a['app'] ?? '')
 		$aliases = (array)($a['aliases'] ?? [])
 		$vis = (int)($visitors[$host] ?? 0) + array_sum(array_map(fn($al) => (int)($visitors[$al] ?? 0), $aliases))
-		$out[] = ['node' => $node, 'label' => $feed['label'] ?? $node, 'app' => $app, 'host' => $host, 'aliases' => $aliases, 'env' => (string)($a['env'] ?? 'prod'), 'code' => (int)($a['code'] ?? 0), 'ms' => (int)($a['ms'] ?? 0), 'vis' => $vis, 'errOcc' => (int)($errors[$app]['occurrences'] ?? 0)]
+		$out[] = ['node' => $node, 'label' => $feed['label'] ?? $node, 'app' => $app, 'host' => $host, 'aliases' => $aliases, 'env' => (string)($a['env'] ?? 'prod'), 'code' => (int)($a['code'] ?? 0), 'ms' => (int)($a['ms'] ?? 0), 'vis' => $vis, 'errOcc' => (int)($errors[$app]['byHost'][$host]['occurrences'] ?? 0)]
 	}
 	return $out
 }
@@ -165,11 +165,11 @@ static errorsView($node, $app = void){
 		$entries = array_values($errors[$app]['entries'] ?? [])
 		usort($entries, fn($a, $b) => ((int)($b['count'] ?? 0)) <=> ((int)($a['count'] ?? 0)))
 		foreach ($entries AS $e){
-			$first = tag('td', tag('code', $e['file'] ?? void, class: 'err-file')).tag('td', tag('code', $e['path'] ?? void, class: 'err-path'))
+			$first = tag('td', tag('code', $e['host'] ?? void, class: 'err-host')).tag('td', tag('code', $e['file'] ?? void, class: 'err-file')).tag('td', tag('code', $e['path'] ?? void, class: 'err-path'))
 			$rows .= static::errorRow($e, $first)
 			$count++
 		}
-		$head = tag('tr', tag('th', 'File').tag('th', 'Path').tag('th', 'Message').tag('th', 'Count', class: 'c').tag('th', 'Last', class: 'c'))
+		$head = tag('tr', tag('th', 'Host').tag('th', 'File').tag('th', 'Path').tag('th', 'Message').tag('th', 'Count', class: 'c').tag('th', 'Last', class: 'c'))
 		$title = 'Errors: '.$app
 	}
 	else {
@@ -664,6 +664,12 @@ on('input', 'input.flt', el => {
 	color: $muted
 	font-family: monospace
 	font-size: .8rem
+}
+.err-host {
+	color: $primary
+	font-family: monospace
+	font-size: .8rem
+	white-space: nowrap
 }
 .err-msg {
 	color: $text

@@ -172,12 +172,19 @@ static collect {
 		if (!is_array($data) || !$data) continue
 		$occ = 0
 		$latest = ''
+		$byHost = []
 		foreach ($data AS $e){
-			$occ += (int)($e['count'] ?? 1)
+			$c = (int)($e['count'] ?? 1)
+			$occ += $c
 			$lo = (string)($e['lastOccurred'] ?? '')
 			if ($lo > $latest) $latest = $lo
+			$h = (string)($e['host'] ?? '')
+			if ($h === '') continue
+			$byHost[$h]['occurrences'] = (int)($byHost[$h]['occurrences'] ?? 0) + $c
+			$byHost[$h]['unique'] = (int)($byHost[$h]['unique'] ?? 0) + 1
+			if ($lo > (string)($byHost[$h]['latest'] ?? '')) $byHost[$h]['latest'] = $lo
 		}
-		$errors[basename(dirname(dirname($file)))] = ['unique' => count($data), 'occurrences' => $occ, 'latest' => $latest, 'entries' => array_slice($data, 0, 100, true)]
+		$errors[basename(dirname(dirname($file)))] = ['unique' => count($data), 'occurrences' => $occ, 'latest' => $latest, 'byHost' => $byHost, 'entries' => array_slice($data, 0, 100, true)]
 	}
 	$mem = ['MemTotal' => 0, 'MemAvailable' => 0]
 	foreach (explode(lf, (string)@file_get_contents('/proc/meminfo')) AS $line){
@@ -360,7 +367,7 @@ static reportErrors {
 						'title' => substr((string)($e['msg'] ?? 'Unknown error'), 0, 200),
 						'body' => trim((string)($e['file'] ?? '').' · '.($e['count'] ?? 1).'× · last '.($e['lastOccurred'] ?? '')),
 						'server' => $node,
-						'host' => (string)$app,
+						'host' => (string)($e['host'] ?? $app),
 					])
 				}
 				catch (\Throwable $ex){
