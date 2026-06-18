@@ -436,6 +436,21 @@ static visitorReport {
 	$d30 = $now - 86400 * 30
 	try {
 		$recent = static::geoEnrich($pdo, $pdo->query('SELECT * FROM visitors ORDER BY changed DESC LIMIT 200')->fetchAll(\PDO::FETCH_ASSOC) ?: [], $ipgeoKey)
+		try {
+			$ids = array_filter(array_map(fn($r) => (string)($r['id'] ?? ''), $recent))
+			if ($ids){
+				$in = implode(comma, array_map(fn($id) => $pdo->quote($id), $ids))
+				$byVisitor = []
+				foreach ($pdo->query("SELECT visitor, page, active_seconds, beats FROM visitor_pages WHERE visitor IN ($in) ORDER BY active_seconds DESC")->fetchAll(\PDO::FETCH_ASSOC) ?: [] AS $pr){
+					$byVisitor[$pr['visitor']][] = $pr
+				}
+				foreach ($recent AS &$r){
+					$r['pages'] = $byVisitor[(string)($r['id'] ?? '')] ?? []
+				}
+				unset($r)
+			}
+		}
+		catch (\Throwable $e){}
 		return [
 			'active' => (int)$pdo->query('SELECT COUNT(id) FROM visitors WHERE changed > '.($now - 300))->fetchColumn(),
 			'recent' => $recent,

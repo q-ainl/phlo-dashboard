@@ -92,8 +92,10 @@ static flag($cc) => $cc && strlen($cc) === 2 && ctype_alpha($cc) ? tag('span', m
 static deviceIcon($device) => ['mobile' => '📱', 'tablet' => '📱', 'desktop' => '💻'][strtolower((string)$device)] ?? '🖥️'
 
 prop kind => !$this->IP ? 'untracked' : (str_starts_with((string)$this->IP, '66.249.') || preg_match('/bot|spider|crawl|slurp/i', (string)$this->browser) ? 'bot' : 'real')
-prop URL => tag('a', $url = "$this->host/$this->page", href: "https://$url", target: '_blank')." ($this->requests)"
+prop URL => tag('a', $url = "$this->host/$this->page", href: "https://$url", target: '_blank')
 prop duration => age_human($this->changed - $this->created)
+prop active => $this->active_seconds ? age_human((int)$this->active_seconds) : dash
+prop pageList => $this->pages ? loop($this->pages, fn($p) => esc(($p['page'] ?? '') ?: slash).' ('.age_human((int)($p['active_seconds'] ?? 0)).')', '<br>') : dash
 prop client {
 	if ($this->kind === 'untracked' || (strlen((string)$this->browser) === 8 && ctype_xdigit((string)$this->browser))) return static::deviceIcon($this->device).space.tag('span', 'untracked', class: 'untracked')
 	$os = str_starts_with((string)$this->os, 'Windows') ? 'Windows' : $this->os
@@ -236,10 +238,17 @@ static schema => arr (
 		list: false,
 		record: false,
 	),
-	requests: field (
-		type: 'number',
-		title: 'Pages',
+	active: field (
+		type: 'virtual',
+		title: 'Active',
 		list: true,
+	),
+	pages: field (
+		type: 'virtual',
+		title: 'Pages',
+		list: false,
+		record: true,
+		label: fn($r) => $r->pageList,
 	),
 	state: field (
 		type: 'select',
