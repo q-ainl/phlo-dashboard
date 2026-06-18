@@ -260,7 +260,6 @@ static ping($hosts, $local = false){
 	foreach ($handles AS $host => $ch){
 		$out[$host] = ['code' => (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE), 'ms' => (int)round(curl_getinfo($ch, CURLINFO_TOTAL_TIME) * 1000)]
 		curl_multi_remove_handle($mh, $ch)
-		curl_close($ch)
 	}
 	curl_multi_close($mh)
 	return $out
