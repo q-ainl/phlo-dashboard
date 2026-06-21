@@ -82,22 +82,21 @@ static check {
 	unset(%session->user)
 	unset(%session->name)
 	unset(%session->fed)
-	%session->returnTo = trim((string)%req->path, '/')
 	return view(phlo('auth')->loginPage, 'Login', css: static::themeCss())
 }
 
-# After a successful login, return to the page the user was gated on; otherwise the home view.
+# Render the home target directly (request and output decoupled, single roundtrip) rather than
+# location() to the gated path. The async login response then replaces the whole body with the
+# full layout + nav, so the menu is placed; a bare loginPage has no nav/main shell for a partial
+# update to target.
 static afterLogin {
-	$to = trim((string)(%session->returnTo ?? void), '/')
-	unset(%session->returnTo)
-	return $to !== void && !static::publicPath($to) ? location(slash.$to) : static::home()
+	return static::home()
 }
 
 static logout {
 	unset(%session->user)
 	unset(%session->name)
 	unset(%session->fed)
-	unset(%session->returnTo)
 	return view(phlo('auth')->loginPage, 'Login', css: static::themeCss())
 }
 

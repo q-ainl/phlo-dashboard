@@ -1,11 +1,11 @@
+static %model.DB => %MySQL
 prop lang => 'en'
-prop token => %cookies->token ??= token(20)
 prop title = 'Phlo Dashboard'
 prop themeColor = 'black'
 prop theme => %session->theme ?? 'ionstorm'
 prop trans => %session->trans ?? 'ripple'
 prop version = '1.0.0-RC2'
-prop model = 'gpt-4o-mini'
+prop %AI.model = 'gpt-4o-mini'
 prop publicPaths = ['api']
 
 prop models => array_values(array_filter(['visitor', 'domain', 'user', 'subscription'], fn($m) => phlo_exists($m)))
@@ -37,12 +37,12 @@ prop menu {
 # Adaptive: full mode (auth module loaded) does security/auth-gate/CMS; headless does only routing → JSON 404.
 if (phlo_exists('auth')){
 	%security->basic
-	$this->token
 	if (auth::check()) return
 	auth::authed() && auth::user()
 	if (trim((string)%req->path, '/') === '') return auth::home()
 	if (!auth::allows(%req->path)) return main('No access to this page.', 'No access')
 }
+%cookies->token ??= token(20)
 if (app::route()) return
 if (phlo_exists('auth')){
 	if (%req->method !== 'GET') return apply(error: 'Invalid request')
