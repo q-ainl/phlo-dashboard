@@ -14,6 +14,20 @@ The Dashboard is the operations layer of the [Phlo platform](https://phlo.tech/e
 - **Visitors, domains, sites**: visitor analytics and host/domain management.
 - **Multi user**: roles plus per server and per module permissions.
 
+## Host discovery
+
+The fleet overview discovers apps and hosts from your web server config. By default it reads Caddy site files (`sites/*.caddy`). Discovery is pluggable per node via `creds.ini`:
+
+```ini
+[discovery]
+sources = caddy, nginx
+nginx   = /etc/nginx/sites-enabled/*
+```
+
+`sources` is a comma list of adapters (default `caddy`). The `nginx` adapter reads `server_name` from each `server { ... }` block (brace-depth aware, so nested `location` blocks are handled), folds `www.` into aliases, and flags redirect-only blocks (`return 30x` or a permanent `rewrite`). Results from all sources are merged and deduped by primary host. The monitoring layers on top (reachability, metrics, visitors) are web server agnostic; errors, version and rebuild stay Phlo specific.
+
+To support another web server, add a `<name>Apps()` adapter returning the canonical app records and list its name in `sources`.
+
 ## Requirements
 
 - PHP 8.3 or newer with `ext-pdo` (`ext-pdo_mysql` and/or `ext-pdo_sqlite` for the database admin)

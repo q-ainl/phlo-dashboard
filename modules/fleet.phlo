@@ -60,6 +60,48 @@ static env($block){
 	return 'prod'
 }
 
+# Shared host normalization: primary host = shortest non-www, env from a dev./stage. prefix, the rest become
+# aliases. Each discovery adapter feeds raw hostnames + which of them are redirect-only.
+static normalizeApp($appName, $hostnames, $redirected, $pureRedirect, $env){
+	$canonical = array_values(array_diff($hostnames, $redirected))
+	if (!$canonical){
+		$pureRedirect = true
+		$canonical = $hostnames
+	}
+	$nonWww = array_values(array_filter($canonical, fn($h) => !str_starts_with($h, 'www.')))
+	$candidates = $nonWww ?: $canonical
+	usort($candidates, fn($a, $c) => strlen($a) <=> strlen($c) ?: strcmp($a, $c))
+	$primary = $candidates[0]
+	$he = str_starts_with($primary, 'dev.') ? 'dev' : (str_starts_with($primary, 'stage.') ? 'stage' : $env)
+	$aliases = array_values(array_filter($hostnames, fn($h) => $h !== $primary))
+	return ['host' => $primary, 'aliases' => $aliases, 'env' => $he, 'app' => $appName, 'redirect' => $pureRedirect]
+}
+
+# Which discovery adapters to run, per node via creds.ini [discovery] sources = caddy, nginx
+# (default caddy, so existing nodes are unchanged). Each name maps to a <name>Apps() adapter.
+static sources {
+	$cfg = (string)(%creds->discovery?->sources ?? void)
+	$list = $cfg !== void ? array_values(array_filter(loop(explode(',', $cfg), fn($s) => trim(strtolower($s))), 'strlen')) : []
+	return $list ?: ['caddy']
+}
+
+# Runs every configured discovery adapter and merges the canonical app records, deduped by primary host
+# (first source wins). This is what collect() consumes; adapters stay webserver-specific behind it.
+static discoverApps {
+	$seen = []
+	$apps = []
+	foreach (static::sources() AS $src){
+		$rows = $src === 'nginx' ? static::nginxApps() : ($src === 'caddy' ? static::caddyApps() : [])
+		foreach ($rows AS $row){
+			$host = (string)($row['host'] ?? void)
+			if ($host === '' || isset($seen[$host])) continue
+			$seen[$host] = true
+			$apps[] = $row
+		}
+	}
+	return $apps
+}
+
 # Apps + hosts from the Caddy sites: per block primary host (shortest non-www) + aliases + env.
 static caddyApps {
 	$apps = []
@@ -105,21 +147,71 @@ static caddyApps {
 					else $pureRedirect = true
 				}
 			}
-			$canonical = array_values(array_diff($hostnames, $redirected))
-			if (!$canonical){
-				$pureRedirect = true
-				$canonical = $hostnames
-			}
-			$nonWww = array_values(array_filter($canonical, fn($h) => !str_starts_with($h, 'www.')))
-			$candidates = $nonWww ?: $canonical
-			usort($candidates, fn($a, $c) => strlen($a) <=> strlen($c) ?: strcmp($a, $c))
-			$primary = $candidates[0]
-			$he = str_starts_with($primary, 'dev.') ? 'dev' : (str_starts_with($primary, 'stage.') ? 'stage' : $env)
-			$aliases = array_values(array_filter($hostnames, fn($h) => $h !== $primary))
-			$apps[] = ['host' => $primary, 'aliases' => $aliases, 'env' => $he, 'app' => $appName, 'redirect' => $pureRedirect]
+			$apps[] = static::normalizeApp($appName, $hostnames, $redirected, $pureRedirect, $env)
 		}
 	}
 	return $apps
+}
+
+# nginx adapter: server blocks -> canonical app records. Globs creds.ini [discovery] nginx = <pattern>
+# (default /etc/nginx/sites-enabled/*). server_name gives the hosts; a `return 30x` or permanent rewrite marks
+# a redirect-only block. nginx carries no env marker, so env follows the dev./stage. host prefix.
+static nginxApps {
+	# Keyed by primary host so the common http+https split (two server blocks, same server_name) collapses to one
+	# record, preferring the non-redirect block over a `return 30x` companion.
+	$byHost = []
+	$skip = static::hiddenSites()
+	$pattern = (string)(%creds->discovery?->nginx ?? '/etc/nginx/sites-enabled/*')
+	foreach (glob($pattern) ?: [] AS $file){
+		if (is_dir($file)) continue
+		$appName = preg_replace('/\.conf$/', '', basename($file))
+		if (in_array($appName, $skip, true)) continue
+		$src = (string)@file_get_contents($file)
+		foreach (static::nginxBlocks($src) AS $block){
+			if (!preg_match_all('/\bserver_name\s+([^;]+);/', $block, $sn, PREG_SET_ORDER)) continue
+			$hostnames = []
+			foreach ($sn AS $s){
+				foreach (preg_split('/\s+/', trim($s[1])) AS $host){
+					$host = trim($host)
+					if ($host === '' || $host === '_' || !str_contains($host, '.')) continue
+					if (!in_array($host, $hostnames, true)) $hostnames[] = $host
+				}
+			}
+			if (!$hostnames) continue
+			$pureRedirect = (bool)preg_match('/\breturn\s+30\d\b/', $block) || (bool)preg_match('/\brewrite\b[^;]+\b(permanent|redirect)\s*;/', $block)
+			$rec = static::normalizeApp($appName, $hostnames, [], $pureRedirect, 'prod')
+			$key = $rec['host']
+			if (!isset($byHost[$key]) || ($byHost[$key]['redirect'] && !$rec['redirect'])) $byHost[$key] = $rec
+		}
+	}
+	return array_values($byHost)
+}
+
+# Extracts top-level `server { ... }` blocks from an nginx config, brace-depth aware so nested location{}
+# blocks stay inside their parent. Returns each block's inner text.
+static nginxBlocks($src){
+	$blocks = []
+	$len = strlen($src)
+	$i = 0
+	while (($pos = strpos($src, 'server', $i)) !== false){
+		$rest = substr($src, $pos + 6)
+		if (!preg_match('/^\s*\{/', $rest, $m)){
+			$i = $pos + 6
+			continue
+		}
+		$start = $pos + 6 + strlen($m[0])
+		$depth = 1
+		$j = $start
+		while ($j < $len && $depth > 0){
+			$ch = $src[$j]
+			if ($ch === '{') $depth++
+			elseif ($ch === '}') $depth--
+			$j++
+		}
+		$blocks[] = substr($src, $start, $j - 1 - $start)
+		$i = $j
+	}
+	return $blocks
 }
 
 # Visitor counts per host from a (possibly external) DB config.
@@ -165,7 +257,7 @@ static whatsapp {
 
 # Full node snapshot: apps, errors, system metrics, visitors, whatsapp. Served via /api/feed.
 static collect {
-	$apps = static::caddyApps()
+	$apps = static::discoverApps()
 	$errors = []
 	foreach (glob(dirname(static::base()).'/*/data/errors.json') AS $file){
 		$data = json_decode((string)@file_get_contents($file), true)
