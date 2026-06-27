@@ -118,6 +118,7 @@ route async POST login {
 	if (phlo_exists('user')){
 		try {
 			if ($u = user::verify($email, $pass)){
+				%session->objRegenerateId()
 				%session->user = $u->id
 				%session->name = $u->displayName
 				return static::afterLogin()
@@ -128,11 +129,13 @@ route async POST login {
 		}
 	}
 	if (static::verifyIni($email, $pass)){
+		%session->objRegenerateId()
 		%session->user = 'root'
 		%session->name = 'root'
 		return static::afterLogin()
 	}
 	if ($fed = static::fedAuth($email, $pass)){
+		%session->objRegenerateId()
 		%session->user = (string)($fed['id'] ?? $email)
 		%session->name = (string)($fed['name'] ?? $email)
 		%session->fed = 1

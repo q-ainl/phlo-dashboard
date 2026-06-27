@@ -39,7 +39,7 @@ static inbox {
 	$rows = void
 	foreach ($msgs AS $m){
 		$cls = static::cls($m->level, $m->type)
-		$src = tag('span', overview::icon('server', 12, 'muted').tag('span', $m->server), class: 'msg-src').tag('span', $m->app, class: 'msg-app').tag('span', age_human(time() - (int)$m->created).' ago', class: 'msg-time')
+		$src = tag('span', overview::icon('server', 12, 'muted').tag('span', esc((string)$m->server)), class: 'msg-src').tag('span', esc((string)$m->app), class: 'msg-app').tag('span', age_human(time() - (int)$m->created).' ago', class: 'msg-time')
 		$line = tag('span', static::emoji((string)$m->type).' '.static::label((string)$m->type), class: 'msg-badge '.$cls).tag('span', esc((string)$m->title), class: 'msg-title')
 		$body = trim((string)$m->body) !== '' ? tag('p', esc((string)$m->body), class: 'msg-body') : void
 		$rows .= tag('div', tag('div', $src, class: 'msg-head').tag('div', $line, class: 'msg-line').$body, class: 'msg-card '.$cls.($m->read_at ? '' : ' unread'))

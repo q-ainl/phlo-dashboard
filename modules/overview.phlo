@@ -149,7 +149,7 @@ static hostsPanel(){
 
 static errorRow($e, $first){
 	$flt = strtolower(($e['_app'] ?? '').' '.($e['file'] ?? '').' '.($e['path'] ?? '').' '.($e['msg'] ?? ''))
-	$cells = $first.tag('td', tag('code', $e['msg'] ?? void, class: 'err-msg')).tag('td', tag('span', number_format((int)($e['count'] ?? 0)), class: 'err-n'), class: 'c').tag('td', tag('span', $e['lastOccurred'] ?? void, class: 'err-when'), class: 'c')
+	$cells = $first.tag('td', tag('code', esc((string)($e['msg'] ?? '')), class: 'err-msg')).tag('td', tag('span', number_format((int)($e['count'] ?? 0)), class: 'err-n'), class: 'c').tag('td', tag('span', $e['lastOccurred'] ?? void, class: 'err-when'), class: 'c')
 	return tag('tr', $cells, data_filter: $flt)
 }
 
@@ -165,7 +165,7 @@ static errorsView($node, $app = void){
 		$entries = array_values($errors[$app]['entries'] ?? [])
 		usort($entries, fn($a, $b) => ((int)($b['count'] ?? 0)) <=> ((int)($a['count'] ?? 0)))
 		foreach ($entries AS $e){
-			$first = tag('td', tag('code', $e['host'] ?? void, class: 'err-host')).tag('td', tag('code', $e['file'] ?? void, class: 'err-file')).tag('td', tag('code', $e['path'] ?? void, class: 'err-path'))
+			$first = tag('td', tag('code', esc((string)($e['host'] ?? '')), class: 'err-host')).tag('td', tag('code', esc((string)($e['file'] ?? '')), class: 'err-file')).tag('td', tag('code', esc((string)($e['path'] ?? '')), class: 'err-path'))
 			$rows .= static::errorRow($e, $first)
 			$count++
 		}
@@ -182,7 +182,7 @@ static errorsView($node, $app = void){
 		}
 		usort($all, fn($a, $b) => ((int)($b['count'] ?? 0)) <=> ((int)($a['count'] ?? 0)))
 		foreach ($all AS $e){
-			$first = tag('td', tag('a', $e['_app'] ?? void, href: '/errors/'.$node.'/'.($e['_app'] ?? ''), class: 'h-server async')).tag('td', tag('code', $e['file'] ?? void, class: 'err-file'))
+			$first = tag('td', tag('a', esc((string)($e['_app'] ?? '')), href: '/errors/'.$node.'/'.($e['_app'] ?? ''), class: 'h-server async')).tag('td', tag('code', esc((string)($e['file'] ?? '')), class: 'err-file'))
 			$rows .= static::errorRow($e, $first)
 			$count++
 		}

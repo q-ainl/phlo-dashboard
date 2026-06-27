@@ -92,7 +92,7 @@ static flag($cc) => $cc && strlen($cc) === 2 && ctype_alpha($cc) ? tag('span', m
 static deviceIcon($device) => ['mobile' => '📱', 'tablet' => '📱', 'desktop' => '💻'][strtolower((string)$device)] ?? '🖥️'
 
 prop kind => !$this->IP ? 'untracked' : (str_starts_with((string)$this->IP, '66.249.') || preg_match('/bot|spider|crawl|slurp/i', (string)$this->browser) ? 'bot' : 'real')
-prop URL => tag('a', $url = "$this->host/$this->page", href: "https://$url", target: '_blank')
+prop URL => tag('a', esc($url = "$this->host/$this->page"), href: "https://$url", target: '_blank')
 prop duration => age_human($this->changed - $this->created)
 prop active => $this->active_seconds ? age_human((int)$this->active_seconds) : dash
 prop pageList => $this->pages ? loop($this->pages, fn($p) => esc(($p['page'] ?? '') ?: slash).' ('.age_human((int)($p['active_seconds'] ?? 0)).')', '<br>') : dash
@@ -106,7 +106,7 @@ prop location => !$this->IP ? tag('span', 'untracked', class: 'untracked', title
 # Compact label for the recent-visitors widget; untracked visitors (no consent → no IP) show as
 # 'untracked' instead of their anonymous browser hash / empty city/os fields.
 static recentLabel($v){
-	$head = tag('b', (string)($v['host'] ?? '')).space.strtoupper((string)($v['lang'] ?? ''))
+	$head = tag('b', esc((string)($v['host'] ?? ''))).space.esc(strtoupper((string)($v['lang'] ?? '')))
 	if (empty($v['IP'])) return $head.space.tag('span', 'untracked', class: 'untracked')
 	return $head.space.trim(((string)($v['city'] ?? '')).space.((string)($v['browser'] ?? '')).space.((string)($v['os'] ?? '')))
 }
@@ -137,7 +137,7 @@ static objWidgets {
 		'Top 8 Referrers (30d)' => obj (
 			order: 11,
 			type: 'list',
-			data: loop(static::topPairs($rep['referrers'] ?? [], 8), fn($count, $ref) => tag('b', $count.'x').space.tag('a', href: $ref, target: '_blank', inner: preg_replace('/^https?:\/\/(www\.)?/', '', (string)$ref))),
+			data: loop(static::topPairs($rep['referrers'] ?? [], 8), fn($count, $ref) => tag('b', $count.'x').space.tag('a', href: preg_match('~^https?://~i', (string)$ref) ? $ref : '#', target: '_blank', inner: esc(preg_replace('/^https?:\/\/(www\.)?/', '', (string)$ref)))),
 		),
 	]
 }
@@ -272,7 +272,7 @@ static schema => arr (
 		type: 'text',
 		title: 'Referrer',
 		length: 100,
-		label: fn($r) => ($ref = $r->referrer) ? (str_starts_with($ref, 'search:') ? tag('span', substr($ref, 7), class: 'ref-search') : tag('a', href: (str_contains($ref, '://') ? $ref : 'https://'.$ref), target: '_blank', inner: preg_replace('/^https?:\/\/(www\.)?/', '', $ref))) : tag('span', 'direct', class: 'untracked'),
+		label: fn($r) => ($ref = $r->referrer) ? (str_starts_with($ref, 'search:') ? tag('span', esc(substr($ref, 7)), class: 'ref-search') : tag('a', href: preg_match('~^https?://~i', (string)$ref) ? $ref : (str_contains($ref, '://') ? '#' : 'https://'.$ref), target: '_blank', inner: esc(preg_replace('/^https?:\/\/(www\.)?/', '', $ref)))) : tag('span', 'direct', class: 'untracked'),
 		search: true,
 		list: true,
 	),
