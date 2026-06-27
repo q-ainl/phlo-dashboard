@@ -84,6 +84,7 @@ static titleRecord = 'Visitor'
 static table = 'visitors'
 static order = 'changed DESC'
 
+static canView => (bool)(auth::user()?->isAdmin)
 static canCreate = false
 static canChange = false
 static canDelete = false

@@ -9,7 +9,8 @@ static pp = 100
 static table = 'domains'
 static order = 'id ASC'
 
-# Writes are admin-only (enforced by the CMS API permission hooks + the module RBAC gate).
+# Access and writes are admin-only (enforced by the CMS view/API permission hooks + the module RBAC gate).
+static canView => (bool)(auth::user()?->isAdmin)
 static canCreate => (bool)(auth::user()?->isAdmin)
 static canChange($r = null) => (bool)(auth::user()?->isAdmin)
 static canDelete($r = null) => (bool)(auth::user()?->isAdmin)

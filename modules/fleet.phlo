@@ -190,6 +190,9 @@ static nginxApps {
 # Extracts top-level `server { ... }` blocks from an nginx config, brace-depth aware so nested location{}
 # blocks stay inside their parent. Returns each block's inner text.
 static nginxBlocks($src){
+	# Strip line comments first so a '#'-commented brace does not unbalance the depth scan. (A separate
+	# server block that only redirects www is still listed on its own; it is not folded into the apex.)
+	$src = preg_replace('/#[^\n]*/', '', (string)$src)
 	$blocks = []
 	$len = strlen($src)
 	$i = 0
