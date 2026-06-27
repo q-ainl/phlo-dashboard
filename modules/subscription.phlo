@@ -7,6 +7,11 @@ view: $this->label
 static table = 'subscriptions'
 static order = 'created DESC'
 
+# Writes are admin-only (enforced by the CMS API permission hooks + the module RBAC gate).
+static canCreate => (bool)(auth::user()?->isAdmin)
+static canChange($r = null) => (bool)(auth::user()?->isAdmin)
+static canDelete($r = null) => (bool)(auth::user()?->isAdmin)
+
 prop label => $this->user_id.' · '.$this->server.'/'.$this->event.' → '.$this->channel
 
 static matches($message){

@@ -676,6 +676,7 @@ route POST api manage {
 }
 
 route async POST manage $node $command $app= {
+	if (!auth::user()?->canServer($node)) return apply(error: 'No access to this server')
 	$app ??= ''
 	$res = fleet::manage($node, $command, $app)
 	if (!($res['ok'] ?? false)) return apply(error: ($res['msg'] ?? 'failed'))

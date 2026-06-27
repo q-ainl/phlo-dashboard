@@ -5,9 +5,10 @@ prop id = 'root'
 prop name = 'root'
 prop email = 'root'
 prop role = 'admin'
+prop modules = []
 prop active = 1
 prop isAdmin => $this->role === 'admin'
 prop displayName => $this->name
 
-method canServer($node) => $this->role === 'admin'
-method canModule($module) => $this->role === 'admin'
+method canServer($node) => $this->isAdmin
+method canModule($module) => $this->isAdmin || in_array($module, (array)$this->modules, true)

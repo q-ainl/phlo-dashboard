@@ -9,6 +9,11 @@ static pp = 100
 static table = 'domains'
 static order = 'id ASC'
 
+# Writes are admin-only (enforced by the CMS API permission hooks + the module RBAC gate).
+static canCreate => (bool)(auth::user()?->isAdmin)
+static canChange($r = null) => (bool)(auth::user()?->isAdmin)
+static canDelete($r = null) => (bool)(auth::user()?->isAdmin)
+
 # The primary key is the domain name itself (text), not an auto-increment int (the model default).
 static idType = 'string'
 

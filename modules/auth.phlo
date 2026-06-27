@@ -2,7 +2,13 @@ static publicPaths => array_merge(['login', 'logout'], (array)(%app->publicPaths
 
 static authed => (bool)(%session->user ?? null)
 
-static publicPath($path = null) => in_array(explode('/', trim((string)($path ?? %req->path), '/'))[0], static::publicPaths())
+static publicPath($path = null){
+	$p = trim((string)($path ?? %req->path), '/')
+	foreach (static::publicPaths() AS $pub){
+		if (str_ends_with($pub, '/') ? str_starts_with($p.'/', $pub) : $p === $pub) return true
+	}
+	return false
+}
 
 static siteCreds => parse_ini_file(data.'auth.ini', true, INI_SCANNER_RAW)['site'] ?? []
 
@@ -35,7 +41,7 @@ static fedAuth($user, $pass){
 
 static user {
 	$sid = %session->user ?? null
-	%req->authUser ??= !$sid ? false : (($sid === 'root' || (%session->fed ?? null) || !phlo_exists('user')) ? new authuser(id: (string)$sid, name: (string)(%session->name ?? $sid)) : (user::authUser() ?: false))
+	%req->authUser ??= !$sid ? false : ((%session->fed ?? null) ? new authuser(id: (string)$sid, name: (string)(%session->name ?? $sid), role: (string)(%session->role ?? 'user'), modules: (array)(%session->modules ?? [])) : (($sid === 'root' || !phlo_exists('user')) ? new authuser(id: (string)$sid, name: (string)(%session->name ?? $sid)) : (user::authUser() ?: false)))
 	return %req->authUser ?: null
 }
 
@@ -130,6 +136,8 @@ route async POST login {
 		%session->user = (string)($fed['id'] ?? $email)
 		%session->name = (string)($fed['name'] ?? $email)
 		%session->fed = 1
+		%session->role = (string)($fed['role'] ?? 'user')
+		%session->modules = array_values(array_filter([(string)(%creds->fleet->master->module ?? void)], 'strlen'))
 		return static::afterLogin()
 	}
 	return apply(inner: ['#loginError' => tag('span', 'Unknown combination of email and password', class: 'login-err')])
