@@ -118,13 +118,13 @@ static hostsTable($rows, $showServer){
 		$gErr = array_sum(array_column($hosts, 'errOcc'))
 		$gFlt = strtolower($app.' '.implode(' ', array_column($hosts, 'host')).' '.implode(' ', array_column($hosts, 'env')))
 		$gMeta = tag('span', count($hosts).'×', class: 'g-count').($gVis ? tag('span', static::icon('users', 12).number_format($gVis), class: 'g-vis') : void).($gErr ? tag('span', static::icon('alert', 12).number_format($gErr), class: 'g-err') : void)
-		$body .= tag('tr', tag('td', tag('span', $app, class: 'g-name').$gMeta, colspan: $cols), class: 'g-row', data_filter: $gFlt)
+		$body .= tag('tr', tag('td', tag('span', esc((string)$app), class: 'g-name').$gMeta, colspan: $cols), class: 'g-row', data_filter: $gFlt)
 		foreach ($hosts AS $hh){
 			$errCell = $hh['errOcc'] ? tag('a', tag('span', static::icon('alert', 13).tag('span', number_format($hh['errOcc'])), class: 'err-badge'), href: '/errors/'.$hh['node'].'/'.$app, class: 'err-link async', title: 'View errors of '.$app) : tag('span', '0', class: 'err-zero')
 			$aliasBadge = ($hh['aliases'] ?? []) ? tag('span', '+'.count($hh['aliases']), class: 'h-alias', title: implode(', ', $hh['aliases'])) : void
-			$hostCell = tag('a', static::icon('globe', 14, 'blue').tag('span', $hh['host'], class: 'h-host'), href: 'https://'.$hh['host'].'/', target: '_blank', class: 'h-link', title: 'Open '.$hh['host']).$aliasBadge
+			$hostCell = tag('a', static::icon('globe', 14, 'blue').tag('span', esc((string)$hh['host']), class: 'h-host'), href: 'https://'.$hh['host'].'/', target: '_blank', class: 'h-link', title: 'Open '.$hh['host']).$aliasBadge
 			$visCell = tag('span', static::icon('users', 14, 'blue').tag('span', number_format($hh['vis']), class: 'vis-num'), class: 'vis')
-			$serverCol = $showServer ? tag('td', tag('span', $hh['label'], class: 'h-server')) : void
+			$serverCol = $showServer ? tag('td', tag('span', esc((string)$hh['label']), class: 'h-server')) : void
 			$flt = strtolower($app.' '.($showServer ? $hh['label'].' ' : '').$hh['host'].' '.$hh['env'])
 			$body .= tag('tr', $serverCol.tag('td', $hostCell).tag('td', static::envBadge($hh['env']), class: 'c').tag('td', static::statusCell($hh['code'], $hh['ms']), class: 'c').tag('td', $visCell, class: 'c').tag('td', $errCell, class: 'c'), class: 'h-row', data_filter: $flt)
 			$count++

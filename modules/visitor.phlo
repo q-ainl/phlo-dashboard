@@ -99,7 +99,7 @@ prop pageList => $this->pages ? loop($this->pages, fn($p) => esc(($p['page'] ?? 
 prop client {
 	if ($this->kind === 'untracked' || (strlen((string)$this->browser) === 8 && ctype_xdigit((string)$this->browser))) return static::deviceIcon($this->device).space.tag('span', 'untracked', class: 'untracked')
 	$os = str_starts_with((string)$this->os, 'Windows') ? 'Windows' : $this->os
-	return static::deviceIcon($this->device).space.$this->browser.($os ? ' ('.$os.')' : void)
+	return static::deviceIcon($this->device).space.esc((string)$this->browser).($os ? ' ('.esc((string)$os).')' : void)
 }
 prop location => !$this->IP ? tag('span', 'untracked', class: 'untracked', title: 'No cookie consent') : ($this->country ? tag('a', static::flag($this->country).space.($this->city && $this->country ? "$this->city, $this->country" : ($this->country ?? dash)), href: "https://www.google.com/maps/@$this->lat,$this->lon,14z", target: 'map') : dash)
 
@@ -108,7 +108,7 @@ prop location => !$this->IP ? tag('span', 'untracked', class: 'untracked', title
 static recentLabel($v){
 	$head = tag('b', esc((string)($v['host'] ?? ''))).space.esc(strtoupper((string)($v['lang'] ?? '')))
 	if (empty($v['IP'])) return $head.space.tag('span', 'untracked', class: 'untracked')
-	return $head.space.trim(((string)($v['city'] ?? '')).space.((string)($v['browser'] ?? '')).space.((string)($v['os'] ?? '')))
+	return $head.space.trim(esc((string)($v['city'] ?? '')).space.esc((string)($v['browser'] ?? '')).space.esc((string)($v['os'] ?? '')))
 }
 
 static objWidgets {
@@ -137,7 +137,7 @@ static objWidgets {
 		'Top 8 Referrers (30d)' => obj (
 			order: 11,
 			type: 'list',
-			data: loop(static::topPairs($rep['referrers'] ?? [], 8), fn($count, $ref) => tag('b', $count.'x').space.tag('a', href: preg_match('~^https?://~i', (string)$ref) ? $ref : '#', target: '_blank', inner: esc(preg_replace('/^https?:\/\/(www\.)?/', '', (string)$ref)))),
+			data: loop(static::topPairs($rep['referrers'] ?? [], 8), fn($count, $ref) => tag('b', $count.'x').space.tag('a', href: preg_match('~^https?://~i', (string)$ref) ? $ref : (str_contains((string)$ref, '://') ? '#' : 'https://'.$ref), target: '_blank', inner: esc(preg_replace('/^https?:\/\/(www\.)?/', '', (string)$ref)))),
 		),
 	]
 }
