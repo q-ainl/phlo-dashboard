@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  build:
+    name: PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.3', '8.4', '8.5']
+    steps:
+      - uses: actions/checkout@v4
+
+      # The dashboard is a Phlo app: it compiles against the engine and the CMS. A real install pulls
+      # them with `composer install`; CI checks both out into vendor/phlo/* pinned to a commit so the
+      # build is deterministic - bump when an engine/CMS contract changes.
+      - name: Check out the Phlo engine
+        uses: actions/checkout@v4
+        with:
+          repository: q-ainl/phlo
+          ref: 7712c37102bec5325f61b92fd5c718f8091c3b80
+          path: vendor/phlo/tech
+
+      - name: Check out the Phlo CMS
+        uses: actions/checkout@v4
+        with:
+          repository: q-ainl/phlo-cms
+          ref: 2cde9c4e91ed57d264a39b599563f8eb4e90c9c9
+          path: vendor/phlo/cms
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo, sodium, gd
+          coverage: none
+
+      - name: Validate composer.json
+        run: composer validate --strict
+
+      # Each node keeps its own www/app.php + data/app.json (gitignored); CI builds from the committed
+      # examples, with build mode on so the compiler runs.
+      - name: Prepare config from the committed examples
+        run: |
+          sed 's/build: false,/build: true,/' www/app.php.example > www/app.php
+          cp data/app.example.json data/app.json
+
+      - name: Build (compile every .phlo against the engine + CMS)
+        run: php www/app.php build::run
+
+      - name: Lint the generated PHP
+        run: |
+          for f in php/*.php; do php -l "$f"; done
