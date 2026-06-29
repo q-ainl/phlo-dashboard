@@ -1,4 +1,4 @@
-static %model.DB => %MySQL
+static %model.DB => getenv('PHLO_TEST_DB') === 'sqlite' ? %SQLite(data.'test.db') : %MySQL
 prop lang => 'en'
 prop title = 'Phlo Dashboard'
 prop themeColor = 'black'

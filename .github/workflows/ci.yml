@@ -39,6 +39,7 @@ jobs:
           php-version: ${{ matrix.php }}
           extensions: pdo, sodium, gd
           coverage: none
+          tools: phpunit:^11
 
       - name: Validate composer.json
         run: composer validate --strict
@@ -56,3 +57,11 @@ jobs:
       - name: Lint the generated PHP
         run: |
           for f in php/*.php; do php -l "$f"; done
+
+      # Compile-only would miss a broken product. Boot the built app on a dependency-free SQLite
+      # (PHLO_TEST_DB=sqlite) and prove it runs: the login page renders, a public API route answers
+      # JSON, and the model layer reaches the database.
+      - name: Smoke test (boot, route, login, db, API)
+        env:
+          PHLO_TEST_DB: sqlite
+        run: phpunit

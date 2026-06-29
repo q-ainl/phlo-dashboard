@@ -44,3 +44,6 @@ data/*.sqlite
 # Composer
 /vendor/
 composer.lock
+
+# Tests
+.phpunit.cache/
