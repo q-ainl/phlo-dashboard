@@ -19,6 +19,7 @@ data/access.log
 data/bi.json
 data/cache/
 data/locks/
+data/tasks/
 
 # Build-output (map behouden via .gitkeep)
 php/*
