@@ -1,7 +1,7 @@
 @ extends: DB
 @ summary: Database manager for MySQL (per-session login) and SQLite (.db files from data/). Browse, structure and schema management, rows, SQL console, import and export. Admin-only.
 
-# MySQL connection (self): per-session creds, no dbname; queries qualify `db`.`table`. SQLite goes through the Phlo SQLite resource (static::db()).
+// MySQL connection (self): per-session creds, no dbname; queries qualify `db`.`table`. SQLite goes through the Phlo SQLite resource (static::db()).
 prop PDO => dbadmin::connectMysql(static::creds())
 
 static connectMysql($c){
@@ -15,7 +15,7 @@ static driver => (string)(static::creds()['driver'] ?? 'mysql')
 
 static isSqlite => static::driver() === 'sqlite'
 
-# Active DB instance: MySQL = self; SQLite = the Phlo SQLite resource (used, not modified).
+// Active DB instance: MySQL = self; SQLite = the Phlo SQLite resource (used, not modified).
 static db {
 	if (static::isSqlite()) return phlo('SQLite', (string)(static::creds()['file'] ?? void))
 	return %dbadmin
@@ -26,7 +26,7 @@ static dbh {
 	return %dbadmin->PDO
 }
 
-# .db/.sqlite files in the data/ folder (basename => full path).
+// .db/.sqlite files in the data/ folder (basename => full path).
 static dataFiles {
 	$out = []
 	foreach (array_merge(glob(data.'*.db') ?: [], glob(data.'*.sqlite') ?: []) AS $f) $out[basename($f)] = $f
@@ -39,8 +39,8 @@ static connected => (bool)(%session->dbadmin ?? null)
 
 static creds => (array)(%session->dbadmin ?? [])
 
-# Guards every async POST route: admin check, CSRF, and (unless $needConn is false) an active DB session.
-# Returns an apply() error response to short-circuit, or null when the request may proceed.
+// Guards every async POST route: admin check, CSRF, and (unless $needConn is false) an active DB session.
+// Returns an apply() error response to short-circuit, or null when the request may proceed.
 static gate($needConn = true){
 	if (!static::guard()) return apply(error: 'No access')
 	if (!%CSRF->verify) return apply(error: 'Invalid CSRF token')
@@ -48,8 +48,8 @@ static gate($needConn = true){
 	return null
 }
 
-# Renders a GET page: sets the active menu, guards admin + connection, runs $view() and renders it via main().
-# A PDOException becomes an inline error box, or (when $bounce) drops the session and shows the login form again.
+// Renders a GET page: sets the active menu, guards admin + connection, runs $view() and renders it via main().
+// A PDOException becomes an inline error box, or (when $bounce) drops the session and shows the login form again.
 static page($view, $title, $path = null, $bounce = false){
 	%app->active = 'dbadmin'
 	if (!static::guard()) return main('No access to this page.', 'No access')
@@ -77,13 +77,13 @@ static q($sql, ...$args){
 
 static all($sql, ...$args) => static::q($sql, ...$args)->fetchAll(\PDO::FETCH_ASSOC)
 
-# Identifiers can't be prepared params: validate + backticks.
+// Identifiers can't be prepared params: validate + backticks.
 static ident($name){
 	if (!regex('/^[A-Za-z0-9_$]+$/', (string)$name)) error('Invalid database, table or column name', 400)
 	return bt.$name.bt
 }
 
-# SQLite: one file = one database, tables without db prefix. MySQL: `db`.`table`.
+// SQLite: one file = one database, tables without db prefix. MySQL: `db`.`table`.
 static rel($db, $table){
 	if (static::isSqlite()) return static::ident($table)
 	return static::ident($db).dot.static::ident($table)
@@ -94,7 +94,7 @@ static dbs {
 	return array_column(static::all('SHOW DATABASES'), 'Database')
 }
 
-# Normalized to MySQL-style keys (Name/Rows/Engine/Data_length/Index_length) so views don't branch.
+// Normalized to MySQL-style keys (Name/Rows/Engine/Data_length/Index_length) so views don't branch.
 static tables($db){
 	if (static::isSqlite()){
 		$out = []
@@ -113,7 +113,7 @@ static checkTable($db, $table){
 	return true
 }
 
-# Normalized to SHOW FULL COLUMNS keys (Field/Type/Null/Key/Default/Extra/Collation/Comment).
+// Normalized to SHOW FULL COLUMNS keys (Field/Type/Null/Key/Default/Extra/Collation/Comment).
 static columns($db, $table){
 	if (static::isSqlite()){
 		$out = []
@@ -128,7 +128,7 @@ static columns($db, $table){
 	return static::all('SHOW FULL COLUMNS FROM '.static::rel($db, $table))
 }
 
-# Normalized to SHOW INDEX keys (Key_name/Non_unique/Column_name/Index_type).
+// Normalized to SHOW INDEX keys (Key_name/Non_unique/Column_name/Index_type).
 static indexes($db, $table){
 	if (static::isSqlite()){
 		$out = []
@@ -1249,7 +1249,7 @@ route both GET dbadmin alter $db $table {
 	return static::page(fn() => static::structureEditView($db, $table), $table.' · edit structure')
 }
 
-# Reads columns in DOM order (payload order) so reordering counts.
+// Reads columns in DOM order (payload order) so reordering counts.
 static alterPlan($p, $current){
 	$order = []
 	foreach (array_keys($p) AS $k){

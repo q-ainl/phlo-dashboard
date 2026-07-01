@@ -9,16 +9,16 @@ static pp = 100
 static table = 'domains'
 static order = 'id ASC'
 
-# Access and writes are admin-only (enforced by the CMS view/API permission hooks + the module RBAC gate).
+// Access and writes are admin-only (enforced by the CMS view/API permission hooks + the module RBAC gate).
 static canView => (bool)(auth::user()?->isAdmin)
 static canCreate => (bool)(auth::user()?->isAdmin)
 static canChange($r = null) => (bool)(auth::user()?->isAdmin)
 static canDelete($r = null) => (bool)(auth::user()?->isAdmin)
 
-# The primary key is the domain name itself (text), not an auto-increment int (the model default).
+// The primary key is the domain name itself (text), not an auto-increment int (the model default).
 static idType = 'string'
 
-# Registrar options for the select. Override per node with a comma list in creds.ini ([domain] registrars = ...).
+// Registrar options for the select. Override per node with a comma list in creds.ini ([domain] registrars = ...).
 static registrars {
 	$cfg = (string)(%creds->domain?->registrars ?? void)
 	$list = $cfg !== void ? array_values(array_filter(loop(explode(',', $cfg), fn($s) => trim($s)), 'strlen')) : []

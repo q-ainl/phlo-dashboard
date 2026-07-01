@@ -2,8 +2,8 @@
 
 view: $this->IP
 
-# Visitor data via the fleet API (GET /api/visitors, HMAC): the own node (if localVisitors=1, directly
-# without self-HTTP) + the peers with visitors=1 in [fleet]. Cached per request, merged. No remote MySQL.
+// Visitor data via the fleet API (GET /api/visitors, HMAC): the own node (if localVisitors=1, directly
+// without self-HTTP) + the peers with visitors=1 in [fleet]. Cached per request, merged. No remote MySQL.
 static report {
 	%req->visitorReport ??= static::fetchReport()
 	return %req->visitorReport
@@ -58,7 +58,7 @@ static rowObject($row){
 
 static records(...$args){
 	$rows = static::report()['recent'] ?? []
-	# CMS pagination sends limit as the MySQL "offset,count" string; honour that as well as a plain count + offset arg.
+	// CMS pagination sends limit as the MySQL "offset,count" string; honour that as well as a plain count + offset arg.
 	if (($limit = (string)($args['limit'] ?? '')) !== ''){
 		$parts = explode(comma, $limit)
 		$offset = count($parts) === 2 ? (int)$parts[0] : (int)($args['offset'] ?? 0)
@@ -103,8 +103,8 @@ prop client {
 }
 prop location => !$this->IP ? tag('span', 'untracked', class: 'untracked', title: 'No cookie consent') : ($this->country ? tag('a', static::flag($this->country).space.($this->city && $this->country ? "$this->city, $this->country" : ($this->country ?? dash)), href: "https://www.google.com/maps/@$this->lat,$this->lon,14z", target: 'map') : dash)
 
-# Compact label for the recent-visitors widget; untracked visitors (no consent → no IP) show as
-# 'untracked' instead of their anonymous browser hash / empty city/os fields.
+// Compact label for the recent-visitors widget; untracked visitors (no consent → no IP) show as
+// 'untracked' instead of their anonymous browser hash / empty city/os fields.
 static recentLabel($v){
 	$head = tag('b', esc((string)($v['host'] ?? ''))).space.esc(strtoupper((string)($v['lang'] ?? '')))
 	if (empty($v['IP'])) return $head.space.tag('span', 'untracked', class: 'untracked')

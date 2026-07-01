@@ -19,8 +19,8 @@ static verifyIni($user, $pass){
 	return $u !== void && $p !== void && hash_equals($u, (string)$user) && hash_equals($p, (string)$pass)
 }
 
-# Federation (gated on [fleet] master in creds): authenticate a user against the central hub. Signs
-# time.auth.user.module with the shared fleet secret; the master checks password + canServer + canModule($module).
+// Federation (gated on [fleet] master in creds): authenticate a user against the central hub. Signs
+// time.auth.user.module with the shared fleet secret; the master checks password + canServer + canModule($module).
 static fedAuth($user, $pass){
 	$cfg = %creds->fleet->master ?? null
 	if (!$cfg) return null
@@ -72,7 +72,7 @@ static themeCss {
 }
 
 static home {
-	# Node-local landing module (constant via www/app.php, e.g. `landing: 'overview'`); otherwise the CMS dashboard.
+	// Node-local landing module (constant via www/app.php, e.g. `landing: 'overview'`); otherwise the CMS dashboard.
 	if (defined('landing') && phlo_exists(landing)){
 		$mod = landing
 		%app->active = $mod
@@ -91,10 +91,10 @@ static check {
 	return view(phlo('auth')->loginPage, 'Login', css: static::themeCss())
 }
 
-# Render the home target directly (request and output decoupled, single roundtrip) rather than
-# location() to the gated path. The async login response then replaces the whole body with the
-# full layout + nav, so the menu is placed; a bare loginPage has no nav/main shell for a partial
-# update to target.
+// Render the home target directly (request and output decoupled, single roundtrip) rather than
+// location() to the gated path. The async login response then replaces the whole body with the
+// full layout + nav, so the menu is placed; a bare loginPage has no nav/main shell for a partial
+// update to target.
 static afterLogin {
 	return static::home()
 }

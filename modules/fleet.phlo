@@ -1,8 +1,8 @@
 static peers => %creds->fleet ?? null
 
-# Shared HMAC peer authentication. The request carries X-Fleet-Time + X-Fleet-Sign; we rebuild the signed
-# payload from the timestamp via $payload($time) and compare against each peer secret. $require optionally
-# limits to peers with that flag set to '1' (e.g. 'manage'). Returns the matching peer name or false.
+// Shared HMAC peer authentication. The request carries X-Fleet-Time + X-Fleet-Sign; we rebuild the signed
+// payload from the timestamp via $payload($time) and compare against each peer secret. $require optionally
+// limits to peers with that flag set to '1' (e.g. 'manage'). Returns the matching peer name or false.
 static verifyPeer($payload, $require = null){
 	$time = (int)($_SERVER['HTTP_X_FLEET_TIME'] ?? 0)
 	$sign = (string)($_SERVER['HTTP_X_FLEET_SIGN'] ?? void)
@@ -18,15 +18,15 @@ static verifyPeer($payload, $require = null){
 	return false
 }
 
-# Builds the X-Fleet-Time + X-Fleet-Sign request headers. The signed payload is the timestamp, optionally
-# suffixed with '.'.$extra (mirrors the verifyPeer payloads on the receiving side).
+// Builds the X-Fleet-Time + X-Fleet-Sign request headers. The signed payload is the timestamp, optionally
+// suffixed with '.'.$extra (mirrors the verifyPeer payloads on the receiving side).
 static signHeaders($secret, $extra = ''){
 	$t = (string)time()
 	$payload = $extra !== '' ? $t.'.'.$extra : $t
 	return ['X-Fleet-Time: '.$t, 'X-Fleet-Sign: '.hash_hmac('sha256', $payload, $secret)]
 }
 
-# Raw parse of this node's own creds.ini (plain array, password as string for direct PDO use).
+// Raw parse of this node's own creds.ini (plain array, password as string for direct PDO use).
 static localCreds {
 	$ini = @parse_ini_file(static::base().'/dashboard/data/creds.ini', true, INI_SCANNER_RAW)
 	return is_array($ini) ? $ini : []
@@ -37,21 +37,21 @@ static authPeer => static::verifyPeer(fn($t) => (string)$t)
 
 static feedData => static::collect()
 
-# Control base (the directory that contains this dashboard): /srv/control or /files/Server/control, derived from app.
+// Control base (the directory that contains this dashboard): /srv/control or /files/Server/control, derived from app.
 static base => dirname(rtrim(app, '/'))
 
-# System Caddy sites that are infrastructure, not deployable apps: hidden from app/site listings.
-# Override per node with a comma list in creds.ini ([hiddenSites] is not a section; use hiddenSites = a, b, c).
+// System Caddy sites that are infrastructure, not deployable apps: hidden from app/site listings.
+// Override per node with a comma list in creds.ini ([hiddenSites] is not a section; use hiddenSites = a, b, c).
 static hiddenSites {
 	$cfg = (string)(%creds->hiddenSites ?? void)
 	$list = $cfg !== void ? array_values(array_filter(loop(explode(',', $cfg), fn($s) => trim($s)), 'strlen')) : []
 	return $list ?: ['control', 'whatsapp']
 }
 
-# OS user/group that should own files written by the runtime (best-effort chown). Configurable per node.
+// OS user/group that should own files written by the runtime (best-effort chown). Configurable per node.
 static webUser => (string)(%creds->node?->webuser ?? 'frankenphp')
 
-# Shell command that restarts the local realtime websocket server (pm2). Configurable per node.
+// Shell command that restarts the local realtime websocket server (pm2). Configurable per node.
 static wsRestart => (string)(%creds->whatsapp?->restart ?? 'HOME=/var/lib/frankenphp /usr/local/bin/pm2 restart websocket 2>&1')
 
 static env($block){
@@ -60,8 +60,8 @@ static env($block){
 	return 'prod'
 }
 
-# Shared host normalization: primary host = shortest non-www, env from a dev./stage. prefix, the rest become
-# aliases. Each discovery adapter feeds raw hostnames + which of them are redirect-only.
+// Shared host normalization: primary host = shortest non-www, env from a dev./stage. prefix, the rest become
+// aliases. Each discovery adapter feeds raw hostnames + which of them are redirect-only.
 static normalizeApp($appName, $hostnames, $redirected, $pureRedirect, $env){
 	$canonical = array_values(array_diff($hostnames, $redirected))
 	if (!$canonical){
@@ -77,16 +77,16 @@ static normalizeApp($appName, $hostnames, $redirected, $pureRedirect, $env){
 	return ['host' => $primary, 'aliases' => $aliases, 'env' => $he, 'app' => $appName, 'redirect' => $pureRedirect]
 }
 
-# Which discovery adapters to run, per node via creds.ini [discovery] sources = caddy, nginx
-# (default caddy, so existing nodes are unchanged). Each name maps to a <name>Apps() adapter.
+// Which discovery adapters to run, per node via creds.ini [discovery] sources = caddy, nginx
+// (default caddy, so existing nodes are unchanged). Each name maps to a <name>Apps() adapter.
 static sources {
 	$cfg = (string)(%creds->discovery?->sources ?? void)
 	$list = $cfg !== void ? array_values(array_filter(loop(explode(',', $cfg), fn($s) => trim(strtolower($s))), 'strlen')) : []
 	return $list ?: ['caddy']
 }
 
-# Runs every configured discovery adapter and merges the canonical app records, deduped by primary host
-# (first source wins). This is what collect() consumes; adapters stay webserver-specific behind it.
+// Runs every configured discovery adapter and merges the canonical app records, deduped by primary host
+// (first source wins). This is what collect() consumes; adapters stay webserver-specific behind it.
 static discoverApps {
 	$seen = []
 	$apps = []
@@ -102,7 +102,7 @@ static discoverApps {
 	return $apps
 }
 
-# Apps + hosts from the Caddy sites: per block primary host (shortest non-www) + aliases + env.
+// Apps + hosts from the Caddy sites: per block primary host (shortest non-www) + aliases + env.
 static caddyApps {
 	$apps = []
 	$skip = static::hiddenSites()
@@ -132,9 +132,9 @@ static caddyApps {
 				$hostnames[] = $host
 			}
 			if (!$hostnames) continue
-			# Redirect-aware: hosts redirected within the block via an @host matcher do not count
-			# as canonical (so the redirect target wins over the alias that points at it). A block that
-			# redirects as a whole (bare redir, no matcher) = redirect-only → flag (not a real app host).
+			// Redirect-aware: hosts redirected within the block via an @host matcher do not count
+			// as canonical (so the redirect target wins over the alias that points at it). A block that
+			// redirects as a whole (bare redir, no matcher) = redirect-only → flag (not a real app host).
 			$redirected = []
 			$pureRedirect = false
 			$matchers = []
@@ -153,12 +153,12 @@ static caddyApps {
 	return $apps
 }
 
-# nginx adapter: server blocks -> canonical app records. Globs creds.ini [discovery] nginx = <pattern>
-# (default /etc/nginx/sites-enabled/*). server_name gives the hosts; a `return 30x` or permanent rewrite marks
-# a redirect-only block. nginx carries no env marker, so env follows the dev./stage. host prefix.
+// nginx adapter: server blocks -> canonical app records. Globs creds.ini [discovery] nginx = <pattern>
+// (default /etc/nginx/sites-enabled/*). server_name gives the hosts; a `return 30x` or permanent rewrite marks
+// a redirect-only block. nginx carries no env marker, so env follows the dev./stage. host prefix.
 static nginxApps {
-	# Keyed by primary host so the common http+https split (two server blocks, same server_name) collapses to one
-	# record, preferring the non-redirect block over a `return 30x` companion.
+	// Keyed by primary host so the common http+https split (two server blocks, same server_name) collapses to one
+	// record, preferring the non-redirect block over a `return 30x` companion.
 	$byHost = []
 	$skip = static::hiddenSites()
 	$pattern = (string)(%creds->discovery?->nginx ?? '/etc/nginx/sites-enabled/*')
@@ -187,11 +187,11 @@ static nginxApps {
 	return array_values($byHost)
 }
 
-# Extracts top-level `server { ... }` blocks from an nginx config, brace-depth aware so nested location{}
-# blocks stay inside their parent. Returns each block's inner text.
+// Extracts top-level `server { ... }` blocks from an nginx config, brace-depth aware so nested location{}
+// blocks stay inside their parent. Returns each block's inner text.
 static nginxBlocks($src){
-	# Strip line comments first so a '#'-commented brace does not unbalance the depth scan. (A separate
-	# server block that only redirects www is still listed on its own; it is not folded into the apex.)
+	// Strip line comments first so a '#'-commented brace does not unbalance the depth scan. (A separate
+	// server block that only redirects www is still listed on its own; it is not folded into the apex.)
 	$src = preg_replace('/#[^\n]*/', '', (string)$src)
 	$blocks = []
 	$len = strlen($src)
@@ -217,7 +217,7 @@ static nginxBlocks($src){
 	return $blocks
 }
 
-# Visitor counts per host from a (possibly external) DB config.
+// Visitor counts per host from a (possibly external) DB config.
 static visitors($db){
 	if (!is_array($db) || empty($db['host']) || empty($db['database'])) return []
 	try {
@@ -229,7 +229,7 @@ static visitors($db){
 	}
 }
 
-# Status of the local phloWA instances (config/wa*.js) via HTTP health (+ qr if not ready).
+// Status of the local phloWA instances (config/wa*.js) via HTTP health (+ qr if not ready).
 static whatsapp {
 	$list = []
 	foreach (glob(static::base().'/config/wa*.js') ?: [] AS $f){
@@ -258,7 +258,7 @@ static whatsapp {
 	return $list
 }
 
-# Full node snapshot: apps, errors, system metrics, visitors, whatsapp. Served via /api/feed.
+// Full node snapshot: apps, errors, system metrics, visitors, whatsapp. Served via /api/feed.
 static collect {
 	$apps = static::discoverApps()
 	$errors = []
@@ -318,12 +318,12 @@ static collect {
 	]
 }
 
-# --- Poller (CLI command `php app.php fleet::poll`, runs as frankenphp via /etc/cron.d/fleet-poll) ---
-# Collects every node into the dashboard cache (data/fleet/<node>.json). The web (frankenphp) only reads that
-# cache and therefore never blocks on a slow/dead node. Replaces the old raw bin/fleet-poll.php.
+// --- Poller (CLI command `php app.php fleet::poll`, runs as frankenphp via /etc/cron.d/fleet-poll) ---
+// Collects every node into the dashboard cache (data/fleet/<node>.json). The web (frankenphp) only reads that
+// cache and therefore never blocks on a slow/dead node. Replaces the old raw bin/fleet-poll.php.
 
-# Parallel reachability check of all hosts at once. curl_multi instead of HTTP() because HTTP() does one
-# request at a time and ~36 hosts sequentially do not fit within the 2-min poll cycle.
+// Parallel reachability check of all hosts at once. curl_multi instead of HTTP() because HTTP() does one
+// request at a time and ~36 hosts sequentially do not fit within the 2-min poll cycle.
 static ping($hosts, $local = false){
 	$hosts = array_values(array_unique($hosts))
 	if (!$hosts || !function_exists('curl_multi_init')) return []
@@ -360,7 +360,7 @@ static ping($hosts, $local = false){
 	return $out
 }
 
-# Attaches the http code + response time per app to the feed data.
+// Attaches the http code + response time per app to the feed data.
 static attachPing($data, $local = false){
 	if (!is_array($data) || empty($data['apps'])) return $data
 	$ping = static::ping(array_column($data['apps'], 'host'), $local)
@@ -371,7 +371,7 @@ static attachPing($data, $local = false){
 	return $data
 }
 
-# Wraps a node snapshot with node/label/mode/ok/polled metadata for the cache.
+// Wraps a node snapshot with node/label/mode/ok/polled metadata for the cache.
 static wrapNode($name, $mode, $data){
 	$rec = is_array($data) ? $data : []
 	$rec['node'] = $name
@@ -382,8 +382,8 @@ static wrapNode($name, $mode, $data){
 	return $rec
 }
 
-# Writes one node cache. Runs as frankenphp, so the cache directly gets the right owner
-# (chown is best-effort, no-op outside root).
+// Writes one node cache. Runs as frankenphp, so the cache directly gets the right owner
+// (chown is best-effort, no-op outside root).
 static storeNode($name, $data){
 	$dir = data.'fleet'
 	if (!is_dir($dir)) @mkdir($dir, 0775, true)
@@ -394,8 +394,8 @@ static storeNode($name, $data){
 	@chgrp($file, $owner)
 }
 
-# Poll cycle: local node in-process via collect(); pull peers via HMAC GET /api/feed. Then
-# new prod errors to the central messaging endpoint. (ssh mode is retired: everything is pull.)
+// Poll cycle: local node in-process via collect(); pull peers via HMAC GET /api/feed. Then
+// new prod errors to the central messaging endpoint. (ssh mode is retired: everything is pull.)
 static poll {
 	static::storeNode('local', static::wrapNode('local', 'self', static::attachPing(static::collect(), true)))
 	$done = ['local']
@@ -421,9 +421,9 @@ static poll {
 	return ['ok' => true, 'nodes' => $done, 'reported' => $pushed]
 }
 
-# Pushes new PROD errors to POST /api/notify (secret) -> dashboard inbox + subscription dispatch.
-# Dev/stage are skipped (error reporting is off on dev). Each error hash notifies at most once per hour
-# (throttle via reported.json) and only for errors seen in the last 15 min. Via HTTP() (no raw curl).
+// Pushes new PROD errors to POST /api/notify (secret) -> dashboard inbox + subscription dispatch.
+// Dev/stage are skipped (error reporting is off on dev). Each error hash notifies at most once per hour
+// (throttle via reported.json) and only for errors seen in the last 15 min. Via HTTP() (no raw curl).
 static reportErrors {
 	$c = %creds->notify ?? null
 	$url = (string)($c->url ?? void)
@@ -444,10 +444,10 @@ static reportErrors {
 		foreach ((array)($d['apps'] ?? []) AS $a) $envByApp[(string)($a['app'] ?? '')] = (string)($a['env'] ?? 'prod')
 		foreach ((array)($d['errors'] ?? []) AS $app => $info){
 			foreach ((array)($info['entries'] ?? []) AS $hash => $e){
-				# Only notify errors from build-off (prod) environments. The engine stamps each
-				# error with the build flag of the environment it occurred in (authoritative).
+				// Only notify errors from build-off (prod) environments. The engine stamps each
+				// error with the build flag of the environment it occurred in (authoritative).
 				if (!empty($e['build'])) continue
-				# Fallback for entries written before the engine stamped build: caddy-derived env.
+				// Fallback for entries written before the engine stamped build: caddy-derived env.
 				if (!array_key_exists('build', $e) && ($envByApp[(string)$app] ?? 'prod') !== 'prod') continue
 				$key = (string)$hash
 				if (($reported[$key] ?? 0) > time() - $cooldown) continue
@@ -476,7 +476,7 @@ static reportErrors {
 	return $pushed
 }
 
-# Geo enrichment of visitor rows via the lookup cache + ipgeolocation.io (miss → API + cache).
+// Geo enrichment of visitor rows via the lookup cache + ipgeolocation.io (miss → API + cache).
 static geoEnrich($pdo, $rows, $ipgeoKey){
 	$ips = []
 	foreach ($rows AS $r) if (!empty($r['IP'])) $ips[$r['IP']] = true
@@ -513,7 +513,7 @@ static geoEnrich($pdo, $rows, $ipgeoKey){
 	return $rows
 }
 
-# Full visitor report (list + aggregations) from the local DB, served via GET /api/visitors.
+// Full visitor report (list + aggregations) from the local DB, served via GET /api/visitors.
 static visitorReport {
 	$ini = static::localCreds()
 	$db = $ini['mysql'] ?? null
@@ -558,8 +558,8 @@ static visitorReport {
 	}
 }
 
-# Federation: a peer node lets the master authenticate a master user for one of its
-# subdashboards. The node signs time.auth.email.module with its fleet secret; returns the matching node name.
+// Federation: a peer node lets the master authenticate a master user for one of its
+// subdashboards. The node signs time.auth.email.module with its fleet secret; returns the matching node name.
 static authFed($email, $module){
 	return static::verifyPeer(fn($t) => $t.'.auth.'.(string)$email.'.'.(string)$module)
 }

@@ -35,7 +35,7 @@ prop menu {
 	return $out
 }
 
-# Adaptive: full mode (auth module loaded) does security/auth-gate/CMS; headless does only routing → JSON 404.
+// Adaptive: full mode (auth module loaded) does security/auth-gate/CMS; headless does only routing → JSON 404.
 if (phlo_exists('auth')){
 	%security->basic
 	if (auth::check()) return

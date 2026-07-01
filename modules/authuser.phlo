@@ -1,6 +1,6 @@
-# Minimal auth-user representation for the [site]/root login (no DB model).
-# This makes the 'user' module (DB multi-user + /users management UI) optional: a leaf node
-# loads only this class for auth, without a Users nav/route. Full nodes also load 'user'.
+// Minimal auth-user representation for the [site]/root login (no DB model).
+// This makes the 'user' module (DB multi-user + /users management UI) optional: a leaf node
+// loads only this class for auth, without a Users nav/route. Full nodes also load 'user'.
 prop id = 'root'
 prop name = 'root'
 prop email = 'root'
