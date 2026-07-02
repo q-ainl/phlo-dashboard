@@ -4,15 +4,19 @@ Admin and monitoring dashboard for the Phlo stack. It bundles fleet monitoring, 
 
 The Dashboard is the operations layer of the [Phlo platform](https://phlo.tech/ecosystem): one place to oversee every app, server and domain built on the [Phlo engine](https://github.com/q-ainl/phlo). Not to be confused with the Phlo Control Center, the per-app dev panel built into the engine itself.
 
+![Fleet overview: every host and app with live status](.github/fleet.png)
+
 ## Features
 
 - **Fleet overview**: real time status of every host and app across the fleet (uptime, CPU, memory, disk, errors, visitors).
 - **Database admin** (`dbadmin`): browse and edit rows, a full structure editor with column reordering, indexes, foreign keys, privileges, an SQL console, import and export, foreign key navigation, database wide search and server status. Works with MySQL and SQLite.
 - **Notifications**: a server scoped inbox; apps push notifications via a secret protected endpoint.
 - **Subscriptions**: users subscribe to (server, event) pairs and get proactive WhatsApp or dashboard delivery.
-- **WhatsApp**: overview of all [phloWA](https://github.com/q-ainl/phlo-whatsapp) instances across the fleet.
+- **WhatsApp**: overview of all [Phlo WhatsApp](https://github.com/q-ainl/phlo-whatsapp) instances across the fleet.
 - **Visitors, domains, sites**: visitor analytics and host/domain management.
 - **Multi user**: roles plus per server and per module permissions.
+
+![The database manager: browse, structure editor, SQL console](.github/dbadmin.png)
 
 ## Host discovery
 

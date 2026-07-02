@@ -8,7 +8,7 @@ static connectMysql($c){
 	$parts = explode(':', trim((string)($c['host'] ?? void)) ?: 'localhost', 2)
 	$port = (int)($parts[1] ?? 0)
 	$dsn = 'mysql:host='.$parts[0].($port ? ';port='.$port : void).';charset=utf8mb4'
-	return new \PDO($dsn, (string)($c['user'] ?? void), (string)($c['pass'] ?? void), [\Pdo\Mysql::ATTR_MULTI_STATEMENTS => false, \PDO::MYSQL_ATTR_LOCAL_INFILE => false, \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION, \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC, \PDO::ATTR_TIMEOUT => 3])
+	return new PDO($dsn, (string)($c['user'] ?? void), (string)($c['pass'] ?? void), [Pdo\Mysql::ATTR_MULTI_STATEMENTS => false, Pdo\Mysql::ATTR_LOCAL_INFILE => false, PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::ATTR_TIMEOUT => 3])
 }
 
 static driver => (string)(static::creds()['driver'] ?? 'mysql')
@@ -57,7 +57,7 @@ static page($view, $title, $path = null, $bounce = false){
 	try {
 		$out = $view()
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		if ($bounce){
 			unset(%session->dbadmin)
 			$out = static::loginView($e->getMessage())
@@ -75,7 +75,7 @@ static q($sql, ...$args){
 	return $stmt
 }
 
-static all($sql, ...$args) => static::q($sql, ...$args)->fetchAll(\PDO::FETCH_ASSOC)
+static all($sql, ...$args) => static::q($sql, ...$args)->fetchAll(PDO::FETCH_ASSOC)
 
 // Identifiers can't be prepared params: validate + backticks.
 static ident($name){
@@ -159,7 +159,7 @@ static acct($user, $host) => %dbadmin->PDO->quote((string)$user).'@'.%dbadmin->P
 
 static accountUrl($user, $host) => '/dbadmin/privilege'.qm.http_build_query(['user' => $user, 'host' => $host])
 
-static grants($user, $host) => static::q('SHOW GRANTS FOR '.static::acct($user, $host))->fetchAll(\PDO::FETCH_COLUMN)
+static grants($user, $host) => static::q('SHOW GRANTS FOR '.static::acct($user, $host))->fetchAll(PDO::FETCH_COLUMN)
 
 static privs => ['ALL' => 'ALL PRIVILEGES', 'SELECT' => 'SELECT', 'INSERT' => 'INSERT', 'UPDATE' => 'UPDATE', 'DELETE' => 'DELETE', 'CREATE' => 'CREATE', 'DROP' => 'DROP', 'ALTER' => 'ALTER', 'INDEX' => 'INDEX', 'REFERENCES' => 'REFERENCES', 'CREATE_VIEW' => 'CREATE VIEW', 'SHOW_VIEW' => 'SHOW VIEW', 'TRIGGER' => 'TRIGGER', 'EXECUTE' => 'EXECUTE', 'CREATE_ROUTINE' => 'CREATE ROUTINE', 'ALTER_ROUTINE' => 'ALTER ROUTINE', 'EVENT' => 'EVENT', 'LOCK_TABLES' => 'LOCK TABLES', 'CREATE_TMP' => 'CREATE TEMPORARY TABLES', 'SHOW_DATABASES' => 'SHOW DATABASES', 'PROCESS' => 'PROCESS', 'RELOAD' => 'RELOAD']
 
@@ -472,7 +472,7 @@ static rowView($db, $table){
 	$editing = $pk && count($keys) === count($pk)
 	$row = null
 	if ($editing){
-		$row = static::q('SELECT * FROM '.static::rel($db, $table).' WHERE '.loop($pk, fn($p) => static::ident($p).'=?', ' AND ').' LIMIT 1', ...array_values($keys))->fetch(\PDO::FETCH_ASSOC) ?: null
+		$row = static::q('SELECT * FROM '.static::rel($db, $table).' WHERE '.loop($pk, fn($p) => static::ident($p).'=?', ' AND ').' LIMIT 1', ...array_values($keys))->fetch(PDO::FETCH_ASSOC) ?: null
 		$row || error('Row not found', 404)
 	}
 	$fields = void
@@ -675,7 +675,7 @@ static serverStatusView(){
 			try {
 				$info[$p] = (string)static::q('PRAGMA '.$p)->fetchColumn()
 			}
-			catch (\PDOException $e){
+			catch (PDOException $e){
 			}
 		}
 		$rows = void
@@ -696,7 +696,7 @@ static serverStatusView(){
 		}
 		$procTable = static::tableWrap(tag('table', tag('thead', tag('tr', tag('th', 'Id').tag('th', 'User').tag('th', 'Host').tag('th', 'DB').tag('th', 'Command').tag('th', 'Time', class: 'num').tag('th', 'State').tag('th', 'Info').tag('th', void))).tag('tbody', $proc), class: 'db-table'))
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		$procTable = static::errorBox($e->getMessage())
 	}
 	$keys = ['Uptime', 'Threads_connected', 'Threads_running', 'Connections', 'Aborted_connects', 'Questions', 'Queries', 'Slow_queries', 'Com_select', 'Com_insert', 'Com_update', 'Com_delete', 'Bytes_received', 'Bytes_sent', 'Innodb_rows_read', 'Innodb_buffer_pool_reads']
@@ -732,7 +732,7 @@ static searchView($db, $q = void){
 			try {
 				$n = (int)static::q('SELECT COUNT(*) FROM '.static::rel($db, $name).' WHERE '.implode(' OR ', $parts), ...$args)->fetchColumn()
 			}
-			catch (\PDOException $e){
+			catch (PDOException $e){
 				continue
 			}
 			if ($n < 1) continue
@@ -903,7 +903,7 @@ route async POST dbadmin login {
 	try {
 		static::connectMysql($c)
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(inner: ['#dbLoginError' => tag('span', esc($e->getMessage()), class: 'db-err')])
 	}
 	%session->dbadmin = $c
@@ -972,7 +972,7 @@ route async POST dbadmin row $db $table {
 		if ($editing) static::q('UPDATE '.static::rel($db, $table).' SET '.loop(array_keys($set), fn($f) => static::ident($f).'=?', comma).' WHERE '.loop($pk, fn($k) => static::ident($k).'=?', ' AND ').(static::isSqlite() ? void : ' LIMIT 1'), ...array_values($set), ...array_values($keys))
 		else static::q('INSERT INTO '.static::rel($db, $table).' ('.loop(array_keys($set), fn($f) => static::ident($f), comma).') VALUES ('.implode(comma, array_fill(0, count($set), qm)).')', ...array_values($set))
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(location: static::href('table', $db, $table))
@@ -992,7 +992,7 @@ route async POST dbadmin delete $db $table {
 		}
 		static::q('DELETE FROM '.static::rel($db, $table).' WHERE '.loop($pk, fn($k) => static::ident($k).'=?', ' AND ').(static::isSqlite() ? void : ' LIMIT 1'), ...array_values($keys))
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(location: static::href('table', $db, $table))
@@ -1013,7 +1013,7 @@ route async POST dbadmin sql {
 		!static::isSqlite() && $db !== void && $pdo->exec('USE '.static::ident($db))
 		$stmt = $pdo->query($sql)
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(inner: ['#sqlResult' => static::errorBox($e->getMessage())])
 	}
 	$ms = round((microtime(true) - $t0) * 1000, 1)
@@ -1063,7 +1063,7 @@ route async POST dbadmin privilege create {
 		static::checkHost($host)
 		static::q('CREATE USER '.static::acct($user, $host).($pass !== void ? ' IDENTIFIED BY '.%dbadmin->PDO->quote($pass) : void))
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(location: static::accountUrl($user, $host))
@@ -1083,7 +1083,7 @@ route async POST dbadmin privilege grant {
 		$scope = $db === '*' ? '*.*' : static::ident($db).dot.($table === '*' ? '*' : static::ident($table))
 		static::q('GRANT '.implode(', ', $privs).' ON '.$scope.' TO '.static::acct($user, $host).(isset($p['grantopt']) ? ' WITH GRANT OPTION' : void))
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(location: static::accountUrl($user, $host))
@@ -1103,7 +1103,7 @@ route async POST dbadmin privilege revoke {
 		$privList = $m[1].(stripos($line, 'WITH GRANT OPTION') !== false ? ', GRANT OPTION' : void)
 		static::q('REVOKE '.$privList.' ON '.$m[2].' FROM '.static::acct($user, $host))
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(location: static::accountUrl($user, $host))
@@ -1118,7 +1118,7 @@ route async POST dbadmin privilege password {
 	try {
 		static::q('ALTER USER '.static::acct($user, $host).' IDENTIFIED BY '.%dbadmin->PDO->quote($pass))
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(toast: '✓ Password changed', location: static::accountUrl($user, $host))
@@ -1131,7 +1131,7 @@ route async POST dbadmin privilege drop {
 	try {
 		static::q('DROP USER '.static::acct($user, $host))
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(location: '/dbadmin/privileges')
@@ -1154,7 +1154,7 @@ route async POST dbadmin create $db {
 		$cols['pks'] && $defs[] = 'PRIMARY KEY ('.implode(comma, $cols['pks']).')'
 		static::q('CREATE TABLE '.static::rel($db, $table).' ('.implode(', ', $defs).')')
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(toast: '✓ Table created', location: static::href('structure', $db, $table))
@@ -1167,7 +1167,7 @@ route async POST dbadmin drop $db $table {
 		static::checkTable($db, $table)
 		static::q('DROP TABLE '.static::rel($db, $table))
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(toast: '✓ Table deleted', location: static::href('db', $db))
@@ -1180,7 +1180,7 @@ route async POST dbadmin truncate $db $table {
 		static::checkTable($db, $table)
 		static::q((static::isSqlite() ? 'DELETE FROM ' : 'TRUNCATE TABLE ').static::rel($db, $table))
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(toast: '✓ Table emptied', location: static::href('table', $db, $table))
@@ -1194,7 +1194,7 @@ route async POST dbadmin rename $db $table {
 		static::checkTable($db, $table)
 		static::q(static::isSqlite() ? 'ALTER TABLE '.static::rel($db, $table).' RENAME TO '.static::ident($new) : 'RENAME TABLE '.static::rel($db, $table).' TO '.static::rel($db, $new))
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(toast: '✓ Table renamed', location: static::href('structure', $db, $new))
@@ -1217,7 +1217,7 @@ route async POST dbadmin column $db $table {
 		if ($orig !== void) static::q('ALTER TABLE '.static::rel($db, $table).' CHANGE '.static::ident($orig).space.$def)
 		else static::q('ALTER TABLE '.static::rel($db, $table).' ADD '.$def)
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(toast: '✓ Column saved', location: static::href('structure', $db, $table))
@@ -1234,7 +1234,7 @@ route async POST dbadmin kill {
 	try {
 		static::q('KILL '.$id)
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(toast: '✓ Process '.$id.' killed', location: '/dbadmin/status')
@@ -1292,7 +1292,7 @@ route async POST dbadmin alter $db $table {
 				$pdo->exec('ALTER TABLE '.static::ident($tmp).' RENAME TO '.static::ident($table))
 				$pdo->commit()
 			}
-			catch (\PDOException $e){
+			catch (PDOException $e){
 				$pdo->inTransaction() && $pdo->rollBack()
 				return apply(error: $e->getMessage())
 			}
@@ -1314,7 +1314,7 @@ route async POST dbadmin alter $db $table {
 			static::q('ALTER TABLE '.static::rel($db, $table).' '.implode(', ', $ops))
 		}
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(toast: '✓ Structure saved', location: static::href('structure', $db, $table))
@@ -1327,7 +1327,7 @@ route async POST dbadmin dropcolumn $db $table {
 		static::checkTable($db, $table)
 		static::q('ALTER TABLE '.static::rel($db, $table).' DROP COLUMN '.static::ident($col))
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(toast: '✓ Column deleted', location: static::href('structure', $db, $table))
@@ -1355,7 +1355,7 @@ route async POST dbadmin index $db $table {
 			static::q('ALTER TABLE '.static::rel($db, $table).' '.$add)
 		}
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(toast: '✓ Index added', location: static::href('structure', $db, $table))
@@ -1375,7 +1375,7 @@ route async POST dbadmin dropindex $db $table {
 			static::q('ALTER TABLE '.static::rel($db, $table).' '.$sql)
 		}
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(toast: '✓ Index deleted', location: static::href('structure', $db, $table))
@@ -1397,7 +1397,7 @@ route async POST dbadmin fk $db $table {
 		$sql = 'ALTER TABLE '.static::rel($db, $table).' ADD FOREIGN KEY ('.static::ident($col).') REFERENCES '.static::rel($rdb, $rtable).' ('.static::ident($rcol).') ON DELETE '.$onDelete.' ON UPDATE '.$onUpdate
 		static::q($sql)
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(toast: '✓ Foreign key added', location: static::href('structure', $db, $table))
@@ -1410,7 +1410,7 @@ route async POST dbadmin dropfk $db $table {
 		static::checkTable($db, $table)
 		static::q('ALTER TABLE '.static::rel($db, $table).' DROP FOREIGN KEY '.static::ident($name))
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(toast: '✓ Foreign key deleted', location: static::href('structure', $db, $table))
@@ -1428,7 +1428,7 @@ route async POST dbadmin import $db {
 	try {
 		!static::isSqlite() && $pdo->exec('USE '.static::ident($db))
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(inner: ['#importResult' => static::errorBox($e->getMessage())])
 	}
 	$done = 0
@@ -1440,7 +1440,7 @@ route async POST dbadmin import $db {
 		}
 		$pdo->inTransaction() && $pdo->commit()
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		$pdo->inTransaction() && $pdo->rollBack()
 		return apply(inner: ['#importResult' => static::errorBox('Statement '.($done + 1).' of '.count($stmts).' failed: '.$e->getMessage())])
 	}
@@ -1454,7 +1454,7 @@ route async POST dbadmin createdatabase {
 	try {
 		static::q('CREATE DATABASE '.static::ident($name))
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(toast: '✓ Database created', location: static::href('db', $name))
@@ -1466,7 +1466,7 @@ route async POST dbadmin dropdatabase $db {
 	try {
 		static::q('DROP DATABASE '.static::ident($db))
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
 	return apply(toast: '✓ Database deleted', location: '/dbadmin')
@@ -1493,7 +1493,7 @@ route GET dbadmin export $db $table= {
 		if ($format === 'sql') return output(static::dumpSql($db, $table), $db.dot.$table.'.sql', true)
 		return output(static::dumpCsv($db, $table), $db.dot.$table.'.csv', true)
 	}
-	catch (\PDOException $e){
+	catch (PDOException $e){
 		return main(static::errorBox($e->getMessage()), 'Export')
 	}
 }
