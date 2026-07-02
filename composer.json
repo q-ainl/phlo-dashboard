@@ -3,7 +3,15 @@
     "description": "Control center for a Phlo deployment: monitor your fleet, manage MySQL and SQLite databases from the browser, and handle notifications, subscriptions and WhatsApp from one place.",
     "type": "project",
     "license": "MIT",
-    "keywords": ["phlo", "dashboard", "monitoring", "fleet", "database", "mysql", "sqlite"],
+    "keywords": [
+        "phlo",
+        "dashboard",
+        "monitoring",
+        "fleet",
+        "database",
+        "mysql",
+        "sqlite"
+    ],
     "homepage": "https://github.com/q-ainl/phlo-dashboard",
     "authors": [
         {
@@ -15,13 +23,14 @@
         "php": ">=8.3",
         "ext-pdo": "*",
         "phlo/tech": "^1.0",
-        "phlo/cms": "^1.0"
+        "phlo/cms": "^1.0",
+        "ext-gd": "*",
+        "ext-curl": "*"
     },
     "suggest": {
         "ext-pdo_mysql": "MySQL connections (DB resources, dbadmin module)",
         "ext-pdo_sqlite": "SQLite connections (dbadmin module)",
-        "ext-sodium": "Encryption in the security resource",
-        "ext-gd": "Icon sprite builder (build config key: icons)"
+        "ext-sodium": "Encryption in the security resource"
     },
     "minimum-stability": "RC",
     "prefer-stable": true,
