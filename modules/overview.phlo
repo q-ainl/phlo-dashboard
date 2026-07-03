@@ -87,6 +87,7 @@ static hostRows($node, $feed){
 	foreach (($feed['apps'] ?? []) AS $a){
 		$host = (string)($a['host'] ?? '')
 		$app = (string)($a['app'] ?? '')
+		if (in_array($app, fleet::hiddenSites(), true)) continue
 		$aliases = (array)($a['aliases'] ?? [])
 		$vis = (int)($visitors[$host] ?? 0) + array_sum(array_map(fn($al) => (int)($visitors[$al] ?? 0), $aliases))
 		$out[] = ['node' => $node, 'label' => $feed['label'] ?? $node, 'app' => $app, 'host' => $host, 'aliases' => $aliases, 'env' => (string)($a['env'] ?? 'prod'), 'code' => (int)($a['code'] ?? 0), 'ms' => (int)($a['ms'] ?? 0), 'vis' => $vis, 'errOcc' => (int)($errors[$app]['byHost'][$host]['occurrences'] ?? 0)]

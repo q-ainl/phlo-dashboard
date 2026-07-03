@@ -408,6 +408,7 @@ static poll {
 	static::storeNode('local', static::wrapNode('local', 'self', static::attachPing(static::collect(), true)))
 	$done = ['local']
 	foreach ((static::peers() ?? []) AS $name => $cfg){
+		if (((string)($cfg->upstream ?? void)) === '1') continue
 		$mode = (string)($cfg->mode ?? 'pull')
 		$data = null
 		if ($mode === 'pull'){
@@ -599,7 +600,7 @@ static clearCachedErrors($name, $app = void){
 static nodes {
 	$out = ['local']
 	$peers = static::peers()
-	if ($peers) foreach ($peers AS $name => $peer) $out[] = $name
+	if ($peers) foreach ($peers AS $name => $peer) ((string)($peer->upstream ?? void)) === '1' || $out[] = $name
 	return $out
 }
 
