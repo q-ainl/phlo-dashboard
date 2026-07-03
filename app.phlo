@@ -7,6 +7,7 @@ prop trans => %session->trans ?? 'ripple'
 prop version = '1.0.0-RC5'
 prop %AI.model = 'gpt-4o-mini'
 prop publicPaths = ['api/feed', 'api/visitors', 'api/auth', 'api/manage', 'api/notify', 'api/wa/']
+prop logout = '/logout'
 prop tasks => arr(poll: arr(do: 'fleet::poll', every: '2 minutes'))
 
 prop models => array_values(array_filter(['visitor', 'domain', 'user', 'subscription'], fn($m) => phlo_exists($m)))

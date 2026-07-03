@@ -1,3 +1,5 @@
+@ requires: security/rate
+
 static publicPaths => array_merge(['login', 'logout'], (array)(%app->publicPaths ?? []))
 
 static authed => (bool)(%session->user ?? null)
@@ -115,6 +117,8 @@ route async POST login {
 	$email = trim((string)(%payload->email ?? %payload->username ?? void))
 	$pass = trim((string)(%payload->password ?? void))
 	if (!$email || !$pass) return apply(inner: ['#loginError' => tag('span', 'Enter email and password', class: 'login-err')])
+	// Throttle brute force before any credential check runs; the message never reveals whether the account exists.
+	if (!rate::check('dashlogin:'.%req->ip, 10, 300, 'apcu')) return apply(inner: ['#loginError' => tag('span', 'Too many attempts. Try again later.', class: 'login-err')])
 	if (phlo_exists('user')){
 		try {
 			if ($u = user::verify($email, $pass)){

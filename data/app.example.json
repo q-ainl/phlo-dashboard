@@ -8,6 +8,7 @@
         "tag",
         "time.human",
         "security/token",
+        "security/rate",
         "security/CSRF",
         "AI/AI",
         "AI/OpenAI",
