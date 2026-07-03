@@ -55,9 +55,25 @@ static webUser => (string)(%creds->node?->webuser ?? 'frankenphp')
 static wsRestart => (string)(%creds->whatsapp?->restart ?? 'HOME=/var/lib/frankenphp /usr/local/bin/pm2 restart websocket 2>&1')
 
 static env($block){
-	if (str_contains($block, 'phlo_dev')) return 'dev'
-	if (str_contains($block, 'phlo_stage')) return 'stage'
-	return 'prod'
+	$root = static::rootFromBlock($block)
+	return $root && preg_match('/\bbuild\s*:\s*true\b/', (string)@file_get_contents($root.'/www/app.php')) ? 'dev' : 'prod'
+}
+static rootFromBlock($block){
+	if ($r = regex('/^\s*root\s+\*?\s*(\S+)/m', $block)[1] ?? void) return static::stripWww($r)
+	preg_match_all('/^[ \t]*import[ \t]+(\S+)([^\n]*)/m', $block, $ms, PREG_SET_ORDER)
+	foreach ($ms AS $imp){
+		if (($def = static::snippetRoot($imp[1])) === void) continue
+		$args = preg_split('/\s+/', trim($imp[2]), -1, PREG_SPLIT_NO_EMPTY)
+		return static::stripWww(preg_replace_callback('/\{args\[(\d+)\]\}/', fn($m) => $args[(int)$m[1]] ?? '', $def))
+	}
+	return void
+}
+static stripWww($r) => str_ends_with((string)$r, '/www') ? substr((string)$r, 0, -4) : (string)$r
+static snippetRoot($name){
+	foreach (array_merge([static::base().'/config/Caddyfile'], glob(static::base().'/sites/*.caddy') ?: []) AS $f){
+		if (preg_match('/\('.preg_quote($name, '/').'\)\s*\{(.*?)^\}/ms', (string)@file_get_contents($f), $m) && ($r = regex('/^\s*root\s+\*?\s*(\S+)/m', $m[1])[1] ?? void)) return $r
+	}
+	return void
 }
 
 // Shared host normalization: primary host = shortest non-www, env from a dev./stage. prefix, the rest become
@@ -72,7 +88,7 @@ static normalizeApp($appName, $hostnames, $redirected, $pureRedirect, $env){
 	$candidates = $nonWww ?: $canonical
 	usort($candidates, fn($a, $c) => strlen($a) <=> strlen($c) ?: strcmp($a, $c))
 	$primary = $candidates[0]
-	$he = str_starts_with($primary, 'dev.') ? 'dev' : (str_starts_with($primary, 'stage.') ? 'stage' : $env)
+	$he = $env
 	$aliases = array_values(array_filter($hostnames, fn($h) => $h !== $primary))
 	return ['host' => $primary, 'aliases' => $aliases, 'env' => $he, 'app' => $appName, 'redirect' => $pureRedirect]
 }
