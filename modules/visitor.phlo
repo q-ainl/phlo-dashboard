@@ -56,8 +56,25 @@ static rowObject($row){
 	return $v
 }
 
-static records(...$args){
+// Per-site filter for the in-memory fleet list: one entry per host present in the recent rows.
+// The list is not DB-backed, so objFilters' snippet is matched against the row's host in filteredRows().
+static objFilters {
+	$hosts = array_values(array_unique(array_filter(loop(static::report()['recent'] ?? [], fn($r) => (string)($r['host'] ?? '')), 'strlen')))
+	sort($hosts)
+	return create($hosts, fn($host) => $host, fn($host) => ['title' => $host, 'filter' => 'host = '.sq.addslashes($host).sq])
+}
+
+static filteredRows($args){
 	$rows = static::report()['recent'] ?? []
+	if (($where = (string)($args['where'] ?? '')) !== '' && preg_match('/host = '.sq.'(.*?)'.sq.'/', $where, $m)){
+		$host = stripslashes($m[1])
+		$rows = array_values(array_filter($rows, fn($r) => (string)($r['host'] ?? '') === $host))
+	}
+	return $rows
+}
+
+static records(...$args){
+	$rows = static::filteredRows($args)
 	// CMS pagination sends limit as the MySQL "offset,count" string; honour that as well as a plain count + offset arg.
 	if (($limit = (string)($args['limit'] ?? '')) !== ''){
 		$parts = explode(comma, $limit)
@@ -70,7 +87,7 @@ static records(...$args){
 	return $out
 }
 
-static recordCount(...$args) => count(static::report()['recent'] ?? [])
+static recordCount(...$args) => count(static::filteredRows($args))
 
 static record(...$args){
 	$id = (string)($args['id'] ?? void)
