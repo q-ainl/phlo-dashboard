@@ -1,4 +1,4 @@
-# Lokale agent state
+# Local agent state
 .claude/
 .codex/
 .local/
@@ -21,7 +21,7 @@ data/cache/
 data/locks/
 data/tasks/
 
-# Build-output (map behouden via .gitkeep)
+# Build output (directory kept via .gitkeep)
 php/*
 !php/.gitkeep
 www/app.css
