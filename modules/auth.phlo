@@ -118,8 +118,7 @@ route async POST login {
 	$pass = trim((string)(%payload->password ?? void))
 	if (!$email || !$pass) return apply(inner: ['#loginError' => tag('span', 'Enter email and password', class: 'login-err')])
 	// Throttle brute force before any credential check runs; the message never reveals whether the account exists.
-	// The phlo_exists/function_exists guards only avoid a fatal on a node whose config omits the rate resource
-	// or apcu; a normal install has both (composer.json requires apcu, the template loads security/rate).
+	// Throttle before any credential check; the guards no-op if a node lacks the rate resource or apcu.
 	if (phlo_exists('rate') && function_exists('apcu_enabled') && apcu_enabled() && !rate::check('dashlogin:'.%req->ip, 10, 300, 'apcu')) return apply(inner: ['#loginError' => tag('span', 'Too many attempts. Try again later.', class: 'login-err')])
 	if (phlo_exists('user')){
 		try {

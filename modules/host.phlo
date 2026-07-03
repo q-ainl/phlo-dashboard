@@ -1,8 +1,12 @@
 method __construct(public $conf)
 
 prop name => trim(explode(',', explode('{', $this->conf, 2)[0])[0])
-prop root => ($r = regex('/^\s*root\s+\*?\s*(\S+)/m', $this->conf)[1] ?? void) ? (str_ends_with($r, '/www') ? substr($r, 0, -4) : $r) : void
-prop isDev => is_file("$this->root/data/app.json")
+prop root {
+	if ($r = regex('/^\s*root\s+\*?\s*(\S+)/m', $this->conf)[1] ?? void) return str_ends_with($r, '/www') ? substr($r, 0, -4) : $r
+	if ($n = regex('/^\s*import\s+phlo_stage\s+(\S+)/m', $this->conf)[1] ?? void) return '/srv/'.$n.'/release'
+	return void
+}
+prop isDev => (bool)preg_match('/\bbuild\s*:\s*true\b/', (string)@file_get_contents("$this->root/www/app.php"))
 prop data => json_read("$this->root/data/app.json")
 prop version {
 	$file = $this->isDev ? "$this->root/app.phlo" : "$this->root/app.php"

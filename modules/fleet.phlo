@@ -37,8 +37,7 @@ static authPeer => static::verifyPeer(fn($t) => (string)$t)
 static feedData => static::collect()
 
 // Control base (the directory that contains this dashboard): /srv/control or /files/Server/control, derived from app.
-// realpath normalizes any /../ segments in app (a dev entry can resolve to www/../) before we take the parent,
-// so the control root is found identically whether app is the flattened prod dir or a dev www/ entry.
+// realpath first, so a dev entry resolving through www/.. yields the same base as the flattened prod dir
 static base => dirname(realpath(rtrim(app, '/')) ?: rtrim(app, '/'))
 
 // System Caddy sites that are infrastructure, not deployable apps: hidden from app/site listings.
