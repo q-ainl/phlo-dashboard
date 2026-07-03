@@ -524,7 +524,7 @@ static visitorReport {
 			if ($ids){
 				$in = implode(comma, array_map(fn($id) => $pdo->quote($id), $ids))
 				$byVisitor = []
-				foreach ($pdo->query("SELECT visitor, page, active_seconds, beats FROM visitor_pages WHERE visitor IN ($in) ORDER BY active_seconds DESC")->fetchAll(\PDO::FETCH_ASSOC) ?: [] AS $pr){
+				foreach ($pdo->query("SELECT visitor, page, SUM(active_seconds) AS active_seconds, SUM(beats) AS beats, MIN(created) AS created FROM visitor_pages WHERE visitor IN ($in) GROUP BY visitor, page ORDER BY visitor, MIN(created) ASC")->fetchAll(\PDO::FETCH_ASSOC) ?: [] AS $pr){
 					$byVisitor[$pr['visitor']][] = $pr
 				}
 				foreach ($recent AS &$r){
@@ -537,7 +537,7 @@ static visitorReport {
 		return [
 			'active' => (int)$pdo->query('SELECT COUNT(id) FROM visitors WHERE changed > '.($now - 300))->fetchColumn(),
 			'recent' => $recent,
-			'countries' => $pdo->query('SELECT COALESCE(l.country, "Unknown") AS country, COUNT(v.id) AS count FROM visitors v LEFT JOIN lookup l ON v.IP = l.ip WHERE v.IP IS NOT NULL AND v.IP != "" AND v.changed > '.$d30.' GROUP BY country ORDER BY count DESC LIMIT 5')->fetchAll(\PDO::FETCH_ASSOC) ?: [],
+			'countries' => $pdo->query('SELECT l.country AS country, COUNT(v.id) AS count FROM visitors v JOIN lookup l ON v.IP = l.ip WHERE v.IP != "" AND l.country IS NOT NULL AND l.country != "" AND v.changed > '.$d30.' GROUP BY l.country ORDER BY count DESC LIMIT 5')->fetchAll(\PDO::FETCH_ASSOC) ?: [],
 			'browsers' => $pdo->query('SELECT browser, COUNT(id) AS count FROM visitors WHERE IP IS NOT NULL AND IP != "" AND changed > '.$d30.' GROUP BY browser ORDER BY count DESC LIMIT 5')->fetchAll(\PDO::FETCH_ASSOC) ?: [],
 			'referrers' => $pdo->query('SELECT referrer, COUNT(id) AS count FROM visitors WHERE referrer IS NOT NULL AND changed > '.$d30.' GROUP BY referrer ORDER BY count DESC LIMIT 8')->fetchAll(\PDO::FETCH_ASSOC) ?: [],
 		]
