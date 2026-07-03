@@ -10,9 +10,20 @@ use PHPUnit\Framework\TestCase;
 final class DashboardSmokeTest extends TestCase {
 
 	private static string $root  = '';
+	private static string $app   = '';
 	private static string $entry = '';
 	private static $server = null;
 	private static int $port = 0;
+
+	private static function rmdir(string $dir):void {
+		if (!is_dir($dir)) return;
+		foreach (scandir($dir) as $f){
+			if ($f === '.' || $f === '..') continue;
+			$p = $dir.'/'.$f;
+			is_link($p) || !is_dir($p) ? @unlink($p) : self::rmdir($p);
+		}
+		@rmdir($dir);
+	}
 
 	private static function cli(string ...$args):array {
 		$proc = proc_open([PHP_BINARY, self::$entry, ...$args], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
@@ -30,25 +41,31 @@ final class DashboardSmokeTest extends TestCase {
 	}
 
 	public static function setUpBeforeClass():void {
-		self::$root  = dirname(__DIR__).'/';
-		self::$entry = self::$root.'www/app.php';
+		self::$root = dirname(__DIR__).'/';
 
-		// Mirror CI: the engine and CMS live under vendor/phlo/*. CI checks them out there; locally we
-		// symlink them from PHLO_ENGINE_PATH / PHLO_CMS_PATH so the test also runs from a bare checkout.
-		@mkdir(self::$root.'vendor/phlo', 0777, true);
 		$engine = rtrim(getenv('PHLO_ENGINE_PATH') ?: '/srv/control/phlo', '/');
 		$cms    = rtrim(getenv('PHLO_CMS_PATH') ?: '/srv/control/CMS', '/');
-		if (!file_exists(self::$root.'vendor/phlo/tech') && is_file($engine.'/phlo.php')) @symlink($engine, self::$root.'vendor/phlo/tech');
-		if (!file_exists(self::$root.'vendor/phlo/cms') && is_dir($cms)) @symlink($cms, self::$root.'vendor/phlo/cms');
-		if (!is_file(self::$root.'vendor/phlo/tech/phlo.php')) self::markTestSkipped('dashboard smoke needs the Phlo engine - set PHLO_ENGINE_PATH or check it out under vendor/phlo/tech');
+		if (!is_file($engine.'/phlo.php')) self::markTestSkipped('dashboard smoke needs the Phlo engine - set PHLO_ENGINE_PATH or check it out at /srv/control/phlo');
+
+		// Build and serve from a throwaway app root under the system temp dir, NEVER the active checkout, so
+		// the test cannot clobber a node's own www/app.php or data/app.json. The source (modules, engine, CMS)
+		// is symlinked in; the entry and config are written from the committed examples, exactly like CI.
+		self::$app   = rtrim(sys_get_temp_dir(), '/').'/dash-smoke-'.getmypid().'/';
+		self::$entry = self::$app.'www/app.php';
+		self::rmdir(self::$app);
+		@mkdir(self::$app.'www', 0777, true);
+		@mkdir(self::$app.'data', 0777, true);
+		@mkdir(self::$app.'vendor/phlo', 0777, true);
+		@symlink(self::$root.'app.phlo', self::$app.'app.phlo');
+		@symlink(self::$root.'modules', self::$app.'modules');
+		@symlink($engine, self::$app.'vendor/phlo/tech');
+		@symlink($cms, self::$app.'vendor/phlo/cms');
 
 		// The SQLite switch must reach the build, the served app and the CLI checks.
 		putenv('PHLO_TEST_DB=sqlite');
 
-		// Prepare config from the committed examples (build mode on, a local host), exactly like CI.
 		file_put_contents(self::$entry, str_replace(['build: false,', 'dashboard.example.tld'], ['build: true,', 'localhost'], file_get_contents(self::$root.'www/app.php.example')));
-		copy(self::$root.'data/app.example.json', self::$root.'data/app.json');
-		@unlink(self::$root.'data/test.db');
+		copy(self::$root.'data/app.example.json', self::$app.'data/app.json');
 
 		[$code, $out, $err] = self::cli('build::run');
 		self::assertSame(0, $code, "build::run failed:\n$out$err");
@@ -58,7 +75,7 @@ final class DashboardSmokeTest extends TestCase {
 			[PHP_BINARY, '-S', '127.0.0.1:'.self::$port, self::$entry],
 			[1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']],
 			$pipes,
-			self::$root.'www'
+			self::$app.'www'
 		);
 		self::assertIsResource(self::$server, 'php -S did not start');
 		$up = false;
@@ -72,6 +89,7 @@ final class DashboardSmokeTest extends TestCase {
 
 	public static function tearDownAfterClass():void {
 		if (self::$server){ proc_terminate(self::$server); proc_close(self::$server); }
+		self::$app && self::rmdir(self::$app);
 	}
 
 	public function testBootsAndRendersLoginPage():void {

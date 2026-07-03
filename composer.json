@@ -28,6 +28,7 @@
         "ext-curl": "*"
     },
     "suggest": {
+        "ext-apcu": "Login brute-force rate limiting (auth module); throttling is skipped without it",
         "ext-pdo_mysql": "MySQL connections (DB resources, dbadmin module)",
         "ext-pdo_sqlite": "SQLite connections (dbadmin module)",
         "ext-sodium": "Encryption in the security resource"
