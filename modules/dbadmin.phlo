@@ -1,7 +1,6 @@
 @ extends: DB
 @ summary: Database manager for MySQL (per-session login) and SQLite (.db files from data/). Browse, structure and schema management, rows, SQL console, import and export. Admin-only.
 
-// MySQL connection (self): per-session creds, no dbname; queries qualify `db`.`table`. SQLite goes through the Phlo SQLite resource (static::db()).
 prop PDO => dbadmin::connectMysql(static::creds())
 
 static connectMysql($c){
@@ -15,7 +14,6 @@ static driver => (string)(static::creds()['driver'] ?? 'mysql')
 
 static isSqlite => static::driver() === 'sqlite'
 
-// Active DB instance: MySQL = self; SQLite = the Phlo SQLite resource (used, not modified).
 static db {
 	if (static::isSqlite()) return phlo('SQLite', (string)(static::creds()['file'] ?? void))
 	return %dbadmin
@@ -26,7 +24,6 @@ static dbh {
 	return %dbadmin->PDO
 }
 
-// .db/.sqlite files in the data/ folder (basename => full path).
 static dataFiles {
 	$out = []
 	foreach (array_merge(glob(data.'*.db') ?: [], glob(data.'*.sqlite') ?: []) AS $f) $out[basename($f)] = $f
@@ -48,8 +45,6 @@ static gate($needConn = true){
 	return null
 }
 
-// Renders a GET page: sets the active menu, guards admin + connection, runs $view() and renders it via main().
-// A PDOException becomes an inline error box, or (when $bounce) drops the session and shows the login form again.
 static page($view, $title, $path = null, $bounce = false){
 	%app->active = 'dbadmin'
 	if (!static::guard()) return main('No access to this page.', 'No access')
@@ -83,7 +78,6 @@ static ident($name){
 	return bt.$name.bt
 }
 
-// SQLite: one file = one database, tables without db prefix. MySQL: `db`.`table`.
 static rel($db, $table){
 	if (static::isSqlite()) return static::ident($table)
 	return static::ident($db).dot.static::ident($table)

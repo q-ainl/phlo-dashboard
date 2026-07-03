@@ -26,7 +26,6 @@ static signHeaders($secret, $extra = ''){
 	return ['X-Fleet-Time: '.$t, 'X-Fleet-Sign: '.hash_hmac('sha256', $payload, $secret)]
 }
 
-// Raw parse of this node's own creds.ini (plain array, password as string for direct PDO use).
 static localCreds {
 	$ini = @parse_ini_file(static::base().'/dashboard/data/creds.ini', true, INI_SCANNER_RAW)
 	return is_array($ini) ? $ini : []
@@ -85,8 +84,6 @@ static sources {
 	return $list ?: ['caddy']
 }
 
-// Runs every configured discovery adapter and merges the canonical app records, deduped by primary host
-// (first source wins). This is what collect() consumes; adapters stay webserver-specific behind it.
 static discoverApps {
 	$seen = []
 	$apps = []
@@ -102,7 +99,6 @@ static discoverApps {
 	return $apps
 }
 
-// Apps + hosts from the Caddy sites: per block primary host (shortest non-www) + aliases + env.
 static caddyApps {
 	$apps = []
 	$skip = static::hiddenSites()
@@ -217,7 +213,6 @@ static nginxBlocks($src){
 	return $blocks
 }
 
-// Visitor counts per host from a (possibly external) DB config.
 static visitors($db){
 	if (!is_array($db) || empty($db['host']) || empty($db['database'])) return []
 	try {
@@ -229,7 +224,6 @@ static visitors($db){
 	}
 }
 
-// Status of the local phloWA instances (config/wa*.js) via HTTP health (+ qr if not ready).
 static whatsapp {
 	$list = []
 	foreach (glob(static::base().'/config/wa*.js') ?: [] AS $f){
@@ -258,7 +252,6 @@ static whatsapp {
 	return $list
 }
 
-// Full node snapshot: apps, errors, system metrics, visitors, whatsapp. Served via /api/feed.
 static collect {
 	$apps = static::discoverApps()
 	$errors = []
@@ -360,7 +353,6 @@ static ping($hosts, $local = false){
 	return $out
 }
 
-// Attaches the http code + response time per app to the feed data.
 static attachPing($data, $local = false){
 	if (!is_array($data) || empty($data['apps'])) return $data
 	$ping = static::ping(array_column($data['apps'], 'host'), $local)
@@ -371,7 +363,6 @@ static attachPing($data, $local = false){
 	return $data
 }
 
-// Wraps a node snapshot with node/label/mode/ok/polled metadata for the cache.
 static wrapNode($name, $mode, $data){
 	$rec = is_array($data) ? $data : []
 	$rec['node'] = $name
@@ -476,7 +467,6 @@ static reportErrors {
 	return $pushed
 }
 
-// Geo enrichment of visitor rows via the lookup cache + ipgeolocation.io (miss → API + cache).
 static geoEnrich($pdo, $rows, $ipgeoKey){
 	$ips = []
 	foreach ($rows AS $r) if (!empty($r['IP'])) $ips[$r['IP']] = true
@@ -513,7 +503,6 @@ static geoEnrich($pdo, $rows, $ipgeoKey){
 	return $rows
 }
 
-// Full visitor report (list + aggregations) from the local DB, served via GET /api/visitors.
 static visitorReport {
 	$ini = static::localCreds()
 	$db = $ini['mysql'] ?? null

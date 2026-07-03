@@ -44,14 +44,10 @@ static kpiStat($ic, $val, $cls = void) => tag('span', static::icon($ic, 14).tag(
 
 static envBadge($env) => tag('span', $env, class: 'env-badge '.$env)
 
-// Status pill: state dot + label, with an optional trailing detail (e.g. response time). Shared by the
-// HTTP-status cell and the WhatsApp-status cell so both use the same up/down/warn vocabulary and styling.
 static stateCell($state, $label, $detail = void) => tag('span', tag('span', void, class: 'st-dot '.$state).tag('span', $label, class: 'sc-code '.$state).($detail !== void ? tag('span', $detail, class: 'sc-ms') : void), class: 'sc')
 
 static statusCell($code, $ms) => static::stateCell(static::envState($code), (int)$code ?: 'down', $ms.'ms')
 
-// Online dot + label + sub line, shared by the compact server card and the full node detail page.
-// $subTitle (optional) becomes the sub line's title attribute (dropped when void).
 static nodeHead($feed, $node, $iconSize, $sub, $subTitle = void){
 	$label = $feed['label'] ?? $node
 	$ok = $feed['ok'] ?? false
@@ -60,10 +56,8 @@ static nodeHead($feed, $node, $iconSize, $sub, $subTitle = void){
 	return tag('div', tag('div', static::icon('server', $iconSize, 'blue').$titles, class: 'kpi-id').$pill, class: 'kpi-head')
 }
 
-// The three CPU/Memory/Storage progress bars, identical between the card and the detail page.
 static metricBars($m) => tag('div', static::bar('CPU', static::loadPct($m), 'cpu', void, ($m->load1 ?? 0).' / '.($m->cpu_count ?? 0)).static::bar('Memory', static::pct($m->mem_used ?? 0, $m->mem_total ?? 0), 'activity', void, size_human($m->mem_used ?? 0).' / '.size_human($m->mem_total ?? 0)).static::bar('Storage', static::pct($m->disk_used ?? 0, $m->disk_total ?? 0), 'harddrive', 'disk', size_human($m->disk_used ?? 0).' / '.size_human($m->disk_total ?? 0)), class: 'sw-bars')
 
-// Total error occurrences across all apps of a node feed.
 static errOccTotal($feed){
 	$t = 0
 	foreach (($feed['errors'] ?? []) AS $x) $t += (int)($x['occurrences'] ?? 0)
@@ -86,8 +80,6 @@ static serverCard($node){
 
 static serversGrid() => tag('section', loop(auth::servers(), fn($node) => static::serverCard($node), void), class: 'kpi-grid')
 
-// Flattens one node's apps into host-row dicts. node/label are always set (error links need node);
-// the Server column itself is toggled by hostsTable's $showServer.
 static hostRows($node, $feed){
 	$visitors = $feed['visitors'] ?? []
 	$errors = $feed['errors'] ?? []
@@ -102,8 +94,6 @@ static hostRows($node, $feed){
 	return $out
 }
 
-// Grouped hosts table from flat host-rows. $showServer adds the Server column (combined fleet view);
-// without it the table is scoped to a single node (Server column omitted, error links still node-scoped).
 static hostsTable($rows, $showServer){
 	$groups = []
 	foreach ($rows AS $r) $groups[$r['app']][] = $r

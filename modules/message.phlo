@@ -6,10 +6,8 @@ view: $this->title
 static table = 'messages'
 static order = 'created DESC'
 
-// Category colour by message type (matches emoji/label below).
 static typeCls($type) => ['user' => 'blue', 'payment' => 'emerald', 'order' => 'emerald'][(string)$type] ?? 'muted'
 
-// Card/badge colour: severity (level) wins, otherwise the category (type).
 static cls($level, $type) => (string)$level === 'error' ? 'error' : ((string)$level === 'warn' ? 'warn' : static::typeCls($type))
 
 static emoji($type) => ['user' => '🧍', 'payment' => '🪙', 'order' => '🛒', 'error' => '⚠️', 'warn' => '⚠️', 'info' => '🔔'][(string)$type] ?? '🔔'
