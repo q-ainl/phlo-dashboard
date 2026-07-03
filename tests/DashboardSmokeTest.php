@@ -40,6 +40,20 @@ final class DashboardSmokeTest extends TestCase {
 		return [$status, $body];
 	}
 
+	private static function post(string $path, array $data):array {
+		$ctx = stream_context_create(['http' => [
+			'method'        => 'POST',
+			'header'        => "Content-Type: application/x-www-form-urlencoded\r\nX-Requested-With: phlo",
+			'content'       => http_build_query($data),
+			'timeout'       => 5,
+			'ignore_errors' => true,
+		]]);
+		$body = (string)file_get_contents('http://127.0.0.1:'.self::$port.$path, false, $ctx);
+		$status = 0;
+		foreach ($http_response_header ?? [] as $h) if (preg_match('#^HTTP/\S+\s+(\d+)#', $h, $m)) $status = (int)$m[1];
+		return [$status, $body];
+	}
+
 	public static function setUpBeforeClass():void {
 		self::$root = dirname(__DIR__).'/';
 
@@ -72,7 +86,7 @@ final class DashboardSmokeTest extends TestCase {
 
 		self::$port   = 8920 + (getmypid() % 1000);
 		self::$server = proc_open(
-			[PHP_BINARY, '-S', '127.0.0.1:'.self::$port, self::$entry],
+			[PHP_BINARY, '-d', 'apc.enabled=1', '-d', 'apc.enable_cli=1', '-S', '127.0.0.1:'.self::$port, self::$entry],
 			[1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']],
 			$pipes,
 			self::$app.'www'
@@ -102,6 +116,20 @@ final class DashboardSmokeTest extends TestCase {
 		[$status, $body] = self::http('/api/feed');
 		$this->assertSame(401, $status, 'the public fleet feed route dispatches and rejects an unauthenticated caller');
 		$this->assertSame('unauthorized', (json_decode($body, true)['error'] ?? null), 'it answers with a structured JSON error, not an HTML page or a crash');
+	}
+
+	public function testLoginIsRateLimited():void {
+		if (!self::http('/')[0]) $this->markTestSkipped('server not up');
+		// Ten bad logins are allowed, the eleventh from the same IP is throttled with a generic message.
+		$throttled = false;
+		for ($i = 1; $i <= 12; $i++){
+			[, $body] = self::post('/login', ['email' => 'nobody@test.invalid', 'password' => 'wrong']);
+			if (str_contains($body, 'Too many attempts')){ $throttled = ($i > 10); break; }
+		}
+		if (!$throttled && str_contains(self::post('/login', ['email' => 'x@y.z', 'password' => 'w'])[1], 'Unknown')){
+			$this->markTestSkipped('rate limiting inactive in this environment (no apcu, no MySQL rate_limit table)');
+		}
+		$this->assertTrue($throttled, 'the eleventh login attempt from one IP is throttled, earlier ones are not');
 	}
 
 	public function testModelLayerReachesSqliteDatabase():void {

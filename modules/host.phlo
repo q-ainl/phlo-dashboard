@@ -25,7 +25,7 @@ static controlFrom($src){
 		preg_match('/\bbuild:\s*true/', $code) && $build = true
 		preg_match('/\bdebug:\s*true/', $code) && $debug = true
 		if (preg_match('/\bcontrol:\s*false/', $code)) return null
-		preg_match('/\bcontrol:\s*[\'"]([a-z0-9]+)[\'"]/', $code, $m) && $path = $m[1]
+		preg_match('/\bcontrol:\s*[\'"]([a-zA-Z0-9_-]+)[\'"]/', $code, $m) && $path = $m[1]
 	}
 	return $build && $debug ? $path : null
 }

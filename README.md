@@ -34,7 +34,7 @@ To support another web server, add a `<name>Apps()` adapter returning the canoni
 
 ## Requirements
 
-- PHP 8.3 or newer with `ext-pdo` (`ext-pdo_mysql` and/or `ext-pdo_sqlite` for the database admin)
+- PHP 8.3 or newer with `ext-pdo` (`ext-pdo_mysql` and/or `ext-pdo_sqlite` for the database admin); `ext-apcu` optional (login rate limiting falls back to the rate_limit DB table without it)
 - FrankenPHP
 - [phlo/tech](https://github.com/q-ainl/phlo) and [phlo/cms](https://github.com/q-ainl/phlo-cms), pulled in via Composer
 
