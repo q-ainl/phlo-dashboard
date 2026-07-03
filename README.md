@@ -34,7 +34,7 @@ To support another web server, add a `<name>Apps()` adapter returning the canoni
 
 ## Requirements
 
-- PHP 8.3 or newer with `ext-pdo` (`ext-pdo_mysql` and/or `ext-pdo_sqlite` for the database admin); `ext-apcu` optional (login rate limiting falls back to the rate_limit DB table without it)
+- PHP 8.3 or newer with `ext-pdo`, `ext-pdo_mysql` (the app stores its data in MySQL) and `ext-apcu` (login rate limiting); `ext-pdo_sqlite` for the SQLite side of the database admin
 - FrankenPHP
 - [phlo/tech](https://github.com/q-ainl/phlo) and [phlo/cms](https://github.com/q-ainl/phlo-cms), pulled in via Composer
 
@@ -46,11 +46,13 @@ composer create-project phlo/dashboard mydashboard
 
 Then set up the node local config:
 
-1. Copy `www/app.php.example` to `www/app.php` and set your host and paths.
+1. Copy `www/app.php.example` to `www/app.php` and set your host and paths. It keeps `build: true` (development): the app compiles on demand and `build::run` is available.
 2. Copy `data/app.example.json` to `data/app.json`.
 3. Create `data/creds.ini` (MySQL connection, fleet peers, alert and notify endpoints) and, for HTTP basic login, `data/auth.ini`.
 4. Build the app: `php www/app.php build::run`
 5. Serve with FrankenPHP.
+
+For production, deploy the compiled output and a second entrypoint with `build: false` (the `build::` tools are development-only and are absent under `build: false`).
 
 ## License
 

@@ -22,14 +22,14 @@
     "require": {
         "php": ">=8.3",
         "ext-pdo": "*",
+        "ext-pdo_mysql": "*",
+        "ext-apcu": "*",
         "phlo/tech": "^1.0",
         "phlo/cms": "^1.0",
         "ext-gd": "*",
         "ext-curl": "*"
     },
     "suggest": {
-        "ext-apcu": "Faster in-memory login rate limiting (auth module); falls back to the rate_limit DB table without it",
-        "ext-pdo_mysql": "MySQL connections (DB resources, dbadmin module)",
         "ext-pdo_sqlite": "SQLite connections (dbadmin module)",
         "ext-sodium": "Encryption in the security resource"
     },

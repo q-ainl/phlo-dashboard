@@ -119,15 +119,14 @@ final class DashboardSmokeTest extends TestCase {
 	}
 
 	public function testLoginIsRateLimited():void {
-		if (!self::http('/')[0]) $this->markTestSkipped('server not up');
-		// Ten bad logins are allowed, the eleventh from the same IP is throttled with a generic message.
+		// Skip only when apcu is genuinely absent; the throttle uses it and this SQLite smoke test has no MySQL.
+		if (!extension_loaded('apcu')) $this->markTestSkipped('login throttle test needs the apcu extension');
 		$throttled = false;
 		for ($i = 1; $i <= 12; $i++){
 			[, $body] = self::post('/login', ['email' => 'nobody@test.invalid', 'password' => 'wrong']);
-			if (str_contains($body, 'Too many attempts')){ $throttled = ($i > 10); break; }
-		}
-		if (!$throttled && str_contains(self::post('/login', ['email' => 'x@y.z', 'password' => 'w'])[1], 'Unknown')){
-			$this->markTestSkipped('rate limiting inactive in this environment (no apcu, no MySQL rate_limit table)');
+			if (!str_contains($body, 'Too many attempts')) continue;
+			$throttled = $i > 10;
+			break;
 		}
 		$this->assertTrue($throttled, 'the eleventh login attempt from one IP is throttled, earlier ones are not');
 	}
