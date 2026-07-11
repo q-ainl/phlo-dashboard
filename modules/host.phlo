@@ -26,6 +26,11 @@ prop version {
 	$pattern = $this->isDev ? '/prop\s+version\s*=\s*["\']?([^\s"\r\n\']+)["\']?/' : '/public\s+\$version\s*=\s*["\']?([^;"\'\r\n]+)["\']?\s*;/'
 	return regex($pattern, file_get_contents($file))[1] ?? '??'
 }
+prop deployed {
+	$build = is_file($file = "$this->root/data/build.json") ? json_decode((string)@file_get_contents($file)) : null
+	if (!($build->commit ?? null)) return null
+	return substr((string)$build->commit, 0, 7).' · '.str_replace('T', ' ', substr((string)($build->built ?? void), 0, 16))
+}
 prop hasCreds => is_file("$this->root/data/creds.ini")
 prop database => $this->hasCreds ? (($db = parse_ini_file("$this->root/data/creds.ini", true, INI_SCANNER_RAW)['mysql']['database'] ?? null) === (string)(%creds->mysql?->database ?? 'control') ? null : $db) : null
 prop control => $this->isDev && !strpos($this->root, 'placeholder') ? static::controlFrom((string)@file_get_contents("$this->root/www/app.php")) : null
@@ -52,6 +57,9 @@ view:
 	<div.host-header>
 		<div.host-hostname>$this->name</div>
 		<span.environment-badge>$this->version {( $this->isDev ? 'dev' : 'prod' )}</span>
+		<if $this->deployed>
+			<span.environment-badge title="Deployed build">$this->deployed</span>
+		</if>
 	</div>
 	<div.host-content>
 		<if $visitors = site::visitors()[$this->name] ?? null>
