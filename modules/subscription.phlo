@@ -40,7 +40,7 @@ static sendWhatsapp($chatId, $message){
 	$label = message::label((string)$message->type)
 	$src = fleet::label((string)$message->server).(trim((string)$message->host) !== '' ? ' / '.$message->host : void)
 	$body = trim((string)$message->body)
-	$text = '*'.$emoji.' '.$label.' · '.(string)$message->title.'*'.($body !== '' ? lf.$body : void).lf.$src
+	$text = '*'.$emoji.' '.$label.' · '.(string)$message->title.'*'.lf.$src.($body !== '' ? lf.$body : void)
 	try {
 		HTTP(rtrim($url, '/').'/text', ['secret: '.$secret], true, ['to' => $chatId, 'text' => $text])
 	}
