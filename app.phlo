@@ -37,7 +37,7 @@ prop menu {
 }
 
 // Guarded en() so the CMS chrome renders without lang.phlo; a loaded lang.phlo defines en() first and wins.
-if (!function_exists('en')) { function en($t, ...$a){ return $a ? sprintf($t, ...$a) : $t; } }
+if (!function_exists('en')){function en($t, ...$a){return $a ? sprintf($t, ...$a) : $t;}}
 
 // Adaptive: full mode (auth module loaded) does security/auth-gate/CMS; headless does only routing → JSON 404.
 if (phlo_exists('auth')){
