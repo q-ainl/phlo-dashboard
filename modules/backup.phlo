@@ -1,0 +1,45 @@
+static dumpCard($label, $m){
+	$sub = tag('span', $label.' · Last run '.$m['time'], class: 'kpi-sub')
+	$badge = tag('span', $m['count'].' databases · '.size_human($m['total']), class: 'st-badge')
+	$head = tag('div', tag('div', tag('h2', tag('span', 'Database backup'), class: 'st-title').$sub, class: 'err-htitle').tag('div', $badge, class: 'st-tools'), class: 'st-head')
+	$body = void
+	foreach ($m['dbs'] AS $r){
+		$body .= tag('tr', tag('td', tag('code', esc($r['db']), class: 'err-file')).tag('td', tag('span', size_human($r['size']), class: 'err-when'), class: 'c'))
+	}
+	$table = tag('table', tag('thead', tag('tr', tag('th', 'Database').tag('th', 'Size', class: 'c'))).tag('tbody', $body))
+	return tag('section', $head.tag('div', $table, class: 'st-scroll'), class: 'sw-card st-card')
+}
+
+static logCard($label, $name, $runs){
+	$bad = count(array_filter($runs, fn($r) => !$r['ok']))
+	$sub = tag('span', $label, class: 'kpi-sub')
+	$badge = tag('span', count($runs).' runs'.($bad ? ' · '.$bad.' failed' : void), class: 'st-badge')
+	$head = tag('div', tag('div', tag('h2', tag('span', esc($name)), class: 'st-title').$sub, class: 'err-htitle').tag('div', $badge, class: 'st-tools'), class: 'st-head')
+	$body = void
+	foreach ($runs AS $r){
+		$dot = tag('span', void, class: 'st-dot '.($r['ok'] ? 'up' : 'down'))
+		$body .= tag('tr', tag('td', $dot, class: 'c').tag('td', tag('span', $r['ts'], class: 'err-when')).tag('td', tag('code', esc($r['text']), class: 'err-msg')))
+	}
+	$table = tag('table', tag('thead', tag('tr', tag('th', void, class: 'c').tag('th', 'Time').tag('th', 'Result'))).tag('tbody', $body))
+	return tag('section', $head.tag('div', $table, class: 'st-scroll'), class: 'sw-card st-card')
+}
+
+static view {
+	$cards = void
+	foreach (fleet::nodes() AS $node){
+		$feed = fleet::cached($node)
+		$b = $feed['backups'] ?? null
+		if (!$b) continue
+		$label = $feed['label'] ?? $node
+		if ($b['manifest'] ?? null) $cards .= static::dumpCard($label, $b['manifest'])
+		foreach ($b['logs'] ?? [] AS $name => $runs) $cards .= static::logCard($label, $name, $runs)
+	}
+	if (!$cards) $cards = tag('section', tag('p', tag('span', 'No backup data reported yet.'), class: 'err-empty'), class: 'sw-card st-card')
+	return tag('div', $cards, class: 'dash')
+}
+
+route both GET backups {
+	if (!auth::user()?->isAdmin) return main('No access to this page.', 'No access')
+	%app->active = 'backup'
+	main(static::view(), 'Backups')
+}

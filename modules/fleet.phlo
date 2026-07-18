@@ -269,6 +269,38 @@ static whatsapp {
 	return $list
 }
 
+static backups {
+	$manifest = null
+	$file = static::base().'/dumps.manifest'
+	$lines = is_file($file) ? (file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: []) : []
+	if ($lines){
+		$dbs = []
+		$total = 0
+		$time = void
+		foreach ($lines AS $line){
+			$p = explode(tab, $line)
+			if (count($p) < 3) continue
+			$dbs[] = ['db' => $p[1], 'size' => (int)$p[2]]
+			$total += (int)$p[2]
+			if ($p[0] > $time) $time = $p[0]
+		}
+		if ($dbs){
+			usort($dbs, fn($a, $b) => $b['size'] <=> $a['size'])
+			$manifest = ['time' => $time, 'count' => count($dbs), 'total' => $total, 'dbs' => $dbs]
+		}
+	}
+	$logs = []
+	foreach (glob(static::base().'/backups/*/dump.log') ?: [] AS $log){
+		$runs = []
+		foreach (file($log, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] AS $line){
+			if (!preg_match('/^(\d{4}-\d\d-\d\dT\S+)\s+(.+?)\r?$/', $line, $m)) continue
+			$runs[] = ['ts' => $m[1], 'text' => $m[2], 'ok' => stripos($m[2], 'FOUT') === false]
+		}
+		if ($runs) $logs[basename(dirname($log))] = array_slice(array_reverse($runs), 0, 20)
+	}
+	return ['manifest' => $manifest, 'logs' => $logs]
+}
+
 static collect {
 	$apps = static::discoverApps()
 	$errors = []
@@ -325,6 +357,7 @@ static collect {
 		'apps' => $apps,
 		'errors' => $errors,
 		'whatsapp' => static::whatsapp(),
+		'backups' => static::backups(),
 	]
 }
 

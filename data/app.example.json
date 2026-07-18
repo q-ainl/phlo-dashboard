@@ -98,7 +98,8 @@
         "user",
         "message",
         "subscription",
-        "dbadmin"
+        "dbadmin",
+        "backup"
     ],
     "paths": {
         "resources": [

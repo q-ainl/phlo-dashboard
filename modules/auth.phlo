@@ -49,7 +49,7 @@ static user {
 
 static moduleFor($path){
 	$seg = explode('/', trim((string)$path, '/'))[0] ?? void
-	return ['users' => 'user', 'visitors' => 'visitor', 'domains' => 'domain', 'sites' => 'site', 'whatsapp' => 'whatsapp', 'overview' => 'overview', 'node' => 'overview', 'errors' => 'overview', 'messages' => 'message', 'subscriptions' => 'subscription', 'dbadmin' => 'dbadmin'][$seg] ?? null
+	return ['users' => 'user', 'visitors' => 'visitor', 'domains' => 'domain', 'sites' => 'site', 'whatsapp' => 'whatsapp', 'overview' => 'overview', 'node' => 'overview', 'errors' => 'overview', 'messages' => 'message', 'subscriptions' => 'subscription', 'dbadmin' => 'dbadmin', 'backups' => 'backup'][$seg] ?? null
 }
 
 static allows($path){
@@ -57,7 +57,7 @@ static allows($path){
 	if (!$mod) return true
 	$u = static::user()
 	if (!$u) return false
-	if (in_array($mod, ['user', 'visitor', 'domain', 'site', 'whatsapp', 'subscription', 'dbadmin']) && !$u->isAdmin) return false
+	if (in_array($mod, ['user', 'visitor', 'domain', 'site', 'whatsapp', 'subscription', 'dbadmin', 'backup']) && !$u->isAdmin) return false
 	return $u->canModule($mod)
 }
 

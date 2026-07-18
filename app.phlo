@@ -25,6 +25,7 @@ prop menu {
 		'message'  => ['icon' => '🔔', 'uri' => 'messages', 'title' => 'Notifications', 'admin' => false],
 		'subscription' => ['icon' => '📡', 'uri' => 'subscriptions', 'title' => 'Subscriptions', 'admin' => true],
 		'user'     => ['icon' => '👤', 'uri' => 'users',    'title' => 'Users', 'admin' => true],
+		'backup'   => ['icon' => '💾', 'uri' => 'backups', 'title' => 'Backups', 'admin' => true],
 	]
 	$out = []
 	foreach ($full AS $key => $item){
