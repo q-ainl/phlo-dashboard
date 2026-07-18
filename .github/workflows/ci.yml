@@ -24,14 +24,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: q-ainl/phlo
-          ref: 6d27ca6beaf51829ff691f485e6fe1fe5de3d435
+          ref: main
           path: vendor/phlo/tech
 
       - name: Check out the Phlo CMS
         uses: actions/checkout@v4
         with:
           repository: q-ainl/phlo-cms
-          ref: 0a3e1386d904f18766e4c8142b684acc7904b416
+          ref: main
           path: vendor/phlo/cms
 
       - uses: shivammathur/setup-php@v2
