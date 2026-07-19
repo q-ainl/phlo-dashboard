@@ -142,4 +142,30 @@ final class DashboardSmokeTest extends TestCase {
 		$this->assertSame(0, $code, "phlo_eval failed:\n$out$err");
 		$this->assertSame('ok', json_decode(trim($out), true), 'a model DDL + insert + read round-trips on the env-switched SQLite database');
 	}
+
+	public function testBackupCardRendersSummaryAndFileLog():void {
+		// en() is the guarded passthrough app.phlo defines on a web request; a bare CLI eval does not run that,
+		// so declare the same shim here to exercise the render with the default (untranslated) labels.
+		$src = <<<'PHLO'
+		if (!function_exists('en')){function en($t, ...$a){return $a ? sprintf($t, ...$a) : $t;}}
+		$b = ['ts' => '2026-07-19 14:01:09', 'copied' => 3, 'removed' => 1, 'files' => ['a/one.txt', 'b/two.sql.gz'], 'gone' => ['c/old.log']]
+		return ['single' => backup::card('Q-dev', $b, true), 'multi' => backup::card('Q-dev', $b, false)]
+		PHLO;
+		[$code, $out, $err] = self::cli('phlo_eval', $src);
+		$this->assertSame(0, $code, "phlo_eval failed:\n$out$err");
+		$r = json_decode(trim($out), true);
+		$this->assertIsArray($r, "backup::card output decoded:\n$out");
+		[$single, $multi] = [$r['single'], $r['multi']];
+		// The summary reads as a plain sentence with the run time and the counts.
+		$this->assertStringContainsString('Q-dev: ran 2026-07-19 14:01 - 3 files copied, 1 deleted', $single, 'the summary line names the node, run time and file counts');
+		// It is a collapsible entry whose body is a plain file log, not a table.
+		$this->assertStringContainsString('<details', $single);
+		$this->assertStringContainsString('<pre', $single);
+		$this->assertStringNotContainsString('<table', $single, 'the file dump renders as a log, not a table');
+		$this->assertStringContainsString('a/one.txt', $single, 'copied files are listed');
+		$this->assertStringContainsString('[deleted] c/old.log', $single, 'deleted files are listed and marked');
+		// A single node opens by default; with more than one node they stay collapsed.
+		$this->assertMatchesRegularExpression('/<details[^>]*\bopen\b/', $single, 'a single backup entry is expanded by default');
+		$this->assertDoesNotMatchRegularExpression('/<details[^>]*\bopen\b/', $multi, 'one of several entries stays collapsed');
+	}
 }

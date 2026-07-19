@@ -1,6 +1,6 @@
 static card($label, $b, $open = false){
 	$when = substr((string)$b['ts'], 0, 16)
-	$sum = esc($label).': '.en('ran %s - %d files copied', $when, (int)$b['copied']).((int)$b['removed'] ? en(', %d deleted', (int)$b['removed']) : '')
+	$sum = esc($label).': '.en('ran %s - %d files copied', esc($when), (int)$b['copied']).((int)$b['removed'] ? en(', %d deleted', (int)$b['removed']) : '')
 	$dump = void
 	foreach ($b['files'] ?? [] AS $f) $dump .= esc($f).lf
 	if ((int)$b['copied'] > count($b['files'] ?? [])) $dump .= en('... and %d more', (int)$b['copied'] - count($b['files'])).lf
