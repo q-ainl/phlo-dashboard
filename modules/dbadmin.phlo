@@ -45,7 +45,7 @@ static gate($needConn = true){
 	return null
 }
 
-static page($view, $title, $path = null, $bounce = false){
+static page($view, $title, $path = null, $bounce = false, ...$args){
 	%app->active = 'dbadmin'
 	if (!static::guard()) return main('No access to this page.', 'No access')
 	if (!static::connected()) return main(static::loginView(), 'Database')
@@ -59,7 +59,8 @@ static page($view, $title, $path = null, $bounce = false){
 		}
 		else $out = static::errorBox($e->getMessage())
 	}
-	return main($out, $title, path: $path)
+	$args['path'] = $path
+	return main($out, $title, ...$args)
 }
 
 static q($sql, ...$args){
@@ -901,7 +902,7 @@ route async POST dbadmin login {
 		return apply(inner: ['#dbLoginError' => tag('span', esc($e->getMessage()), class: 'db-err')])
 	}
 	%session->dbadmin = $c
-	return location('/dbadmin')
+	return static::page(fn() => static::pickerView(), 'Database', 'dbadmin', true)
 }
 
 route async POST dbadmin sqlite {
@@ -916,13 +917,13 @@ route async POST dbadmin sqlite {
 		return apply(inner: ['#dbLoginError' => tag('span', esc($e->getMessage()), class: 'db-err')])
 	}
 	%session->dbadmin = ['driver' => 'sqlite', 'file' => $files[$name], 'name' => $name]
-	return location('/dbadmin')
+	return static::page(fn() => static::pickerView(), 'Database', 'dbadmin', true)
 }
 
 route async POST dbadmin logout {
 	if ($g = static::gate(false)) return $g
 	unset(%session->dbadmin)
-	return location('/dbadmin')
+	return static::page(fn() => static::pickerView(), 'Database', 'dbadmin', true)
 }
 
 route both GET dbadmin db $db {
@@ -969,7 +970,7 @@ route async POST dbadmin row $db $table {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(location: static::href('table', $db, $table))
+	return static::page(fn() => static::browseView($db, $table), $table, trim(static::href('table', $db, $table), slash))
 }
 
 route async POST dbadmin delete $db $table {
@@ -989,7 +990,7 @@ route async POST dbadmin delete $db $table {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(location: static::href('table', $db, $table))
+	return static::page(fn() => static::browseView($db, $table), $table, trim(static::href('table', $db, $table), slash))
 }
 
 route both GET dbadmin sql $db= {
@@ -1060,7 +1061,7 @@ route async POST dbadmin privilege create {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(location: static::accountUrl($user, $host))
+	return static::page(fn() => static::privilegeView($user, $host), $user.'@'.$host, trim(static::accountUrl($user, $host), slash))
 }
 
 route async POST dbadmin privilege grant {
@@ -1080,7 +1081,7 @@ route async POST dbadmin privilege grant {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(location: static::accountUrl($user, $host))
+	return static::page(fn() => static::privilegeView($user, $host), $user.'@'.$host, trim(static::accountUrl($user, $host), slash))
 }
 
 route async POST dbadmin privilege revoke {
@@ -1100,7 +1101,7 @@ route async POST dbadmin privilege revoke {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(location: static::accountUrl($user, $host))
+	return static::page(fn() => static::privilegeView($user, $host), $user.'@'.$host, trim(static::accountUrl($user, $host), slash))
 }
 
 route async POST dbadmin privilege password {
@@ -1115,7 +1116,7 @@ route async POST dbadmin privilege password {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(toast: '✓ Password changed', location: static::accountUrl($user, $host))
+	return static::page(fn() => static::privilegeView($user, $host), $user.'@'.$host, trim(static::accountUrl($user, $host), slash), toast: '✓ Password changed')
 }
 
 route async POST dbadmin privilege drop {
@@ -1128,7 +1129,7 @@ route async POST dbadmin privilege drop {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(location: '/dbadmin/privileges')
+	return static::page(fn() => static::privilegesView(), 'Privileges', 'dbadmin/privileges')
 }
 
 route both GET dbadmin create $db {
@@ -1151,7 +1152,7 @@ route async POST dbadmin create $db {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(toast: '✓ Table created', location: static::href('structure', $db, $table))
+	return static::page(fn() => static::structureView($db, $table), $table.' · structure', trim(static::href('structure', $db, $table), slash), toast: '✓ Table created')
 }
 
 route async POST dbadmin drop $db $table {
@@ -1164,7 +1165,7 @@ route async POST dbadmin drop $db $table {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(toast: '✓ Table deleted', location: static::href('db', $db))
+	return static::page(fn() => static::tablesView($db), $db, trim(static::href('db', $db), slash), toast: '✓ Table deleted')
 }
 
 route async POST dbadmin truncate $db $table {
@@ -1177,7 +1178,7 @@ route async POST dbadmin truncate $db $table {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(toast: '✓ Table emptied', location: static::href('table', $db, $table))
+	return static::page(fn() => static::browseView($db, $table), $table, trim(static::href('table', $db, $table), slash), toast: '✓ Table emptied')
 }
 
 route async POST dbadmin rename $db $table {
@@ -1191,7 +1192,7 @@ route async POST dbadmin rename $db $table {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(toast: '✓ Table renamed', location: static::href('structure', $db, $new))
+	return static::page(fn() => static::structureView($db, $new), $new.' · structure', trim(static::href('structure', $db, $new), slash), toast: '✓ Table renamed')
 }
 
 route both GET dbadmin column $db $table {
@@ -1214,7 +1215,7 @@ route async POST dbadmin column $db $table {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(toast: '✓ Column saved', location: static::href('structure', $db, $table))
+	return static::page(fn() => static::structureView($db, $table), $table.' · structure', trim(static::href('structure', $db, $table), slash), toast: '✓ Column saved')
 }
 
 route both GET dbadmin status {
@@ -1231,7 +1232,7 @@ route async POST dbadmin kill {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(toast: '✓ Process '.$id.' killed', location: '/dbadmin/status')
+	return static::page(fn() => static::serverStatusView(), 'Server status', 'dbadmin/status', toast: '✓ Process '.$id.' killed')
 }
 
 route both GET dbadmin search $db {
@@ -1311,7 +1312,7 @@ route async POST dbadmin alter $db $table {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(toast: '✓ Structure saved', location: static::href('structure', $db, $table))
+	return static::page(fn() => static::structureView($db, $table), $table.' · structure', trim(static::href('structure', $db, $table), slash), toast: '✓ Structure saved')
 }
 
 route async POST dbadmin dropcolumn $db $table {
@@ -1324,7 +1325,7 @@ route async POST dbadmin dropcolumn $db $table {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(toast: '✓ Column deleted', location: static::href('structure', $db, $table))
+	return static::page(fn() => static::structureView($db, $table), $table.' · structure', trim(static::href('structure', $db, $table), slash), toast: '✓ Column deleted')
 }
 
 route async POST dbadmin index $db $table {
@@ -1352,7 +1353,7 @@ route async POST dbadmin index $db $table {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(toast: '✓ Index added', location: static::href('structure', $db, $table))
+	return static::page(fn() => static::structureView($db, $table), $table.' · structure', trim(static::href('structure', $db, $table), slash), toast: '✓ Index added')
 }
 
 route async POST dbadmin dropindex $db $table {
@@ -1372,7 +1373,7 @@ route async POST dbadmin dropindex $db $table {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(toast: '✓ Index deleted', location: static::href('structure', $db, $table))
+	return static::page(fn() => static::structureView($db, $table), $table.' · structure', trim(static::href('structure', $db, $table), slash), toast: '✓ Index deleted')
 }
 
 route async POST dbadmin fk $db $table {
@@ -1394,7 +1395,7 @@ route async POST dbadmin fk $db $table {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(toast: '✓ Foreign key added', location: static::href('structure', $db, $table))
+	return static::page(fn() => static::structureView($db, $table), $table.' · structure', trim(static::href('structure', $db, $table), slash), toast: '✓ Foreign key added')
 }
 
 route async POST dbadmin dropfk $db $table {
@@ -1407,7 +1408,7 @@ route async POST dbadmin dropfk $db $table {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(toast: '✓ Foreign key deleted', location: static::href('structure', $db, $table))
+	return static::page(fn() => static::structureView($db, $table), $table.' · structure', trim(static::href('structure', $db, $table), slash), toast: '✓ Foreign key deleted')
 }
 
 route async POST dbadmin import $db {
@@ -1438,7 +1439,7 @@ route async POST dbadmin import $db {
 		$pdo->inTransaction() && $pdo->rollBack()
 		return apply(inner: ['#importResult' => static::errorBox('Statement '.($done + 1).' of '.count($stmts).' failed: '.$e->getMessage())])
 	}
-	return apply(toast: '✓ '.$done.' statements executed', location: static::href('db', $db))
+	return static::page(fn() => static::tablesView($db), $db, trim(static::href('db', $db), slash), toast: '✓ '.$done.' statements executed')
 }
 
 route async POST dbadmin createdatabase {
@@ -1451,7 +1452,7 @@ route async POST dbadmin createdatabase {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(toast: '✓ Database created', location: static::href('db', $name))
+	return static::page(fn() => static::tablesView($name), $name, trim(static::href('db', $name), slash), toast: '✓ Database created')
 }
 
 route async POST dbadmin dropdatabase $db {
@@ -1463,12 +1464,12 @@ route async POST dbadmin dropdatabase $db {
 	catch (PDOException $e){
 		return apply(error: $e->getMessage())
 	}
-	return apply(toast: '✓ Database deleted', location: '/dbadmin')
+	return static::page(fn() => static::pickerView(), 'Database', 'dbadmin', true, toast: '✓ Database deleted')
 }
 
 route GET dbadmin export $db $table= {
 	if (!static::guard()) return main('No access to this page.', 'No access')
-	if (!static::connected()) return location('/dbadmin')
+	if (!static::connected()) return static::page(fn() => static::pickerView(), 'Database', 'dbadmin', true)
 	$format = strtolower((string)(%req->query['format'] ?? 'csv'))
 	try {
 		if (trim((string)$table) === void){
