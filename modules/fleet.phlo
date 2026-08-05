@@ -81,8 +81,20 @@ static indexableFrom($src){
 	}
 	return false
 }
+// The vhost's own root, ignoring any root inside a nested handle or route block: an asset alias
+// points one sub-path at another directory and is not the site root.
+static topLevelRoot($block){
+	$depth = 0
+	foreach (explode(lf, (string)$block) AS $line){
+		$code = trim(explode('#', $line, 2)[0])
+		if ($depth === 1 && preg_match('/^root\s+\*?\s*(\S+)/', $code, $m)) return $m[1]
+		$depth += substr_count($code, '{') - substr_count($code, '}')
+	}
+	return void
+}
+
 static rootFromBlock($block){
-	if ($r = regex('/^\s*root\s+\*?\s*(\S+)/m', $block)[1] ?? void) return static::stripWww($r)
+	if ($r = static::topLevelRoot($block)) return static::stripWww($r)
 	preg_match_all('/^[ \t]*import[ \t]+(\S+)([^\n]*)/m', $block, $ms, PREG_SET_ORDER)
 	foreach ($ms AS $imp){
 		if (($def = static::snippetRoot($imp[1])) === void) continue
