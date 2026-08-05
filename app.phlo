@@ -10,7 +10,9 @@ prop publicPaths = ['api/feed', 'api/visitors', 'api/auth', 'api/manage', 'api/n
 prop logout = '/logout'
 prop tasks => arr(poll: arr(do: 'fleet::poll', every: '2 minutes'))
 
-prop models => array_values(array_filter(['visitor', 'domain', 'user', 'subscription'], fn($m) => phlo_exists($m)))
+prop modelsExtra => []
+prop menuExtra => []
+prop models => array_values(array_filter(array_unique(array_merge(['visitor', 'domain', 'user', 'subscription'], (array)$this->modelsExtra)), fn($m) => phlo_exists($m)))
 prop menu {
 	$u = auth::user()
 	if (!$u) return []
@@ -28,6 +30,7 @@ prop menu {
 		'user'     => ['icon' => '👤', 'uri' => 'users',    'title' => 'Users', 'admin' => true],
 		'backup'   => ['icon' => '💾', 'uri' => 'backups', 'title' => 'Backups', 'admin' => true],
 	]
+	$full = array_merge($full, (array)$this->menuExtra)
 	$out = []
 	foreach ($full AS $key => $item){
 		if (!phlo_exists($key)) continue

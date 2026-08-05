@@ -92,6 +92,49 @@ static GET($url){
 	}
 }
 
+// Preview images come from other hosts, and a strict img-src would block them. They are served from our own
+// origin instead: the URL is never taken from the request but read from the stored preview, so this can only
+// ever fetch an address the site itself published. The bytes are cached next to that preview.
+static shotFile($app) => static::dir().static::key($app).'.img'
+
+// The image address is resolved here, never taken from the request: the home preview reads it from the stored
+// file, a subpage reads it from the page the stored sitemap points at. Both can only be an address the site
+// itself published.
+static shotUrl($app, $i = void, $lang = void){
+	if ($i === void) return (string)(((array)(static::stored($app)['home'] ?? []))['image'] ?? void)
+	$product = static::products()[$app] ?? null
+	$meta = static::stored($app)
+	if (!$product || !$meta) return void
+	$page = ((array)($meta['pages'] ?? []))[(int)$i] ?? null
+	if (!$page) return void
+	$host = (string)$product['face']['host']
+	$path = (string)(($lang !== void) ? (((array)($page['alt'] ?? []))[$lang] ?? $page['path']) : $page['path'])
+	$html = static::GET('https://'.$host.$path)
+	return $html === null ? void : (string)(static::meta($html, 'https://'.$host)['image'] ?? void)
+}
+
+static shot($app, $i = void, $lang = void){
+	$file = static::shotFile($app).($i === void ? void : '.'.static::key((string)$i.($lang !== void ? '-'.$lang : void)))
+	if (is_file($file) && filemtime($file) > time() - 86400) return (string)file_get_contents($file)
+	$url = static::shotUrl($app, $i, $lang)
+	if ($url === void || !is_absolute_url($url)) return null
+	try {
+		$bytes = (string)HTTP($url, agent: 'PhloDashboard/1.0 (+preview)', timeout: 8)
+	}
+	catch (\Throwable $e){
+		return null
+	}
+	// A site that lost its og:image answers with its catch-all page, so check the bytes really are an image
+	// before caching or serving them: passing HTML off as an image only yields a broken picture.
+	if ($bytes === void || !@getimagesizefromstring($bytes)) return null
+	is_dir(static::dir()) || @mkdir(static::dir(), 0775, true)
+	file_put_contents($file, $bytes)
+	$owner = fleet::webUser()
+	@chown($file, $owner)
+	@chgrp($file, $owner)
+	return $bytes
+}
+
 static fetch($host){
 	$base = 'https://'.$host
 	$html = static::GET($base.slash)
@@ -176,9 +219,13 @@ static langs($pages){
 	return array_keys($langs)
 }
 
-static preview($meta, $host){
+static preview($meta, $host, $app = void, $i = void, $lang = void){
 	$image = (string)($meta['image'] ?? void)
-	$shot = $image !== void ? tag('img', null, src: $image, alt: void, loading: 'lazy', decoding: 'async', class: 'pd-img') : tag('div', overview::icon('globe', 26), class: 'pd-img pd-noimg')
+	$src = $app !== void ? '/product/image/'.rawurlencode((string)$app).($i === void ? void : slash.rawurlencode((string)$i).($lang !== void ? slash.rawurlencode((string)$lang) : void)) : $image
+	// A site can advertise an og:image that no longer resolves; then there is nothing to show and the
+	// placeholder is the honest answer, instead of a broken picture in the card.
+	$has = $image !== void && ($app === void || static::shot($app, $i, $lang) !== null)
+	$shot = $has ? tag('img', null, src: $src, alt: void, loading: 'lazy', decoding: 'async', class: 'pd-img') : tag('div', overview::icon('globe', 26), class: 'pd-img pd-noimg')
 	$domain = (string)(parse_url((string)($meta['url'] ?? void), PHP_URL_HOST) ?: $host)
 	$body = tag('span', esc(strtoupper($domain)), class: 'pd-domain')
 	$body .= tag('h3', esc((string)($meta['title'] ?? void)) ?: en('No title'), class: 'pd-title')
@@ -186,7 +233,7 @@ static preview($meta, $host){
 	return $shot.tag('div', $body, class: 'pd-body')
 }
 
-static previewBox($app, $meta, $host) => tag('div', static::preview($meta, $host), id: static::previewId($app), class: 'pd-preview')
+static previewBox($app, $meta, $host, $proxy = false, $i = void, $lang = void) => tag('div', static::preview($meta, $host, $proxy ? $app : void, $i, $lang), id: static::previewId($app), class: 'pd-preview')
 
 static blank($app){
 	$body = tag('p', en('No preview loaded yet.'), class: 'pd-descr').tag('button', en('Load preview'), type: 'button', data_app: $app, class: 'pd-btn pd-load')
@@ -239,7 +286,7 @@ static card($product, $meta = null){
 	$name = trim((string)($meta['home']['site'] ?? void)) ?: (trim((string)($meta['home']['title'] ?? void)) ?: $host)
 	$head = tag('h2', esc($name), class: 'pd-name').tag('a', overview::icon('external', 13), href: 'https://'.$host.slash, target: '_blank', title: $host, class: 'pd-open')
 	$body = tag('div', $head, class: 'pd-head')
-	$body .= $meta ? static::previewBox($app, (array)$meta['home'], $host) : static::blank($app)
+	$body .= $meta ? static::previewBox($app, (array)$meta['home'], $host, true) : static::blank($app)
 	$body .= static::picker($app, (array)($meta['pages'] ?? []))
 	$body .= static::ops($face)
 	$body .= static::layers($product['layers'])
@@ -283,6 +330,16 @@ route async GET product load $app {
 	return apply(outer: ['#'.static::id($app) => static::card($product, $data)])
 }
 
+// Serves a preview image from our own origin, so a strict img-src keeps holding. $app only selects a stored
+// preview; the address that gets fetched comes from that file, never from the request.
+route GET product image $app $i= $lang= {
+	if (!isset(static::products()[$app])) return false
+	$bytes = static::shot($app, $i ?? void, $lang ?? void)
+	if ($bytes === null) return false
+	%res->header('Cache-Control', 'private, max-age=86400')
+	return output($bytes, type: (string)(@getimagesizefromstring($bytes)['mime'] ?? 'application/octet-stream'))
+}
+
 // $i indexes the stored sitemap, so the fetched URL can only ever be one the site published itself.
 route async GET product page $app $i $lang= {
 	$product = static::products()[$app] ?? null
@@ -294,7 +351,7 @@ route async GET product page $app $i $lang= {
 	$path = (string)((($lang ?? void) !== void ? (((array)($page['alt'] ?? []))[$lang] ?? $page['path']) : $page['path']))
 	$html = static::GET('https://'.$host.$path)
 	if ($html === null) return apply(error: en('Could not reach %s', $host.$path))
-	return apply(outer: ['#'.static::previewId($app) => static::previewBox($app, static::meta($html, 'https://'.$host), $host)])
+	return apply(outer: ['#'.static::previewId($app) => static::previewBox($app, static::meta($html, 'https://'.$host), $host, true, $i, $lang ?? void)])
 }
 
 <script>
