@@ -15,7 +15,7 @@ static canDelete($r = null) => (bool)(auth::user()?->isAdmin)
 
 prop displayName => $this->name ?: $this->email
 
-static moduleOptions => ['overview', 'visitor', 'domain', 'site', 'whatsapp', 'message', 'subscription', 'user']
+static moduleOptions => ['overview', 'visitor', 'domain', 'site', 'product', 'whatsapp', 'message', 'subscription', 'user']
 prop serverIds => array_filter(array_map('trim', explode(',', (string)$this->allowed_servers)))
 prop moduleIds => array_filter(array_map('trim', explode(',', (string)$this->allowed_modules)))
 prop isAdmin => $this->role === 'admin'

@@ -1,0 +1,526 @@
+@ summary: Published sites of the fleet, rendered as social preview cards with a sitemap page picker.
+
+// A product is an app that publishes a site: discovery reports `seo` and `indexable` for the host. Every other
+// host of the same app (staging, dev, admin endpoints, redirect aliases) becomes a layer on that one card.
+// The grid renders from the fleet cache alone; homepage preview and sitemap are fetched on request and stored
+// together in data/products/<app>.json. Subpage previews are fetched live and never stored.
+
+static dir => data.'products/'
+static key($app) => preg_replace('/[^a-z0-9._-]+/i', '-', (string)$app)
+static id($app) => 'pd-'.preg_replace('/[^a-z0-9]+/i', '-', (string)$app)
+static previewId($app) => 'pv-'.preg_replace('/[^a-z0-9]+/i', '-', (string)$app)
+static file($app) => static::dir().static::key($app).'.json'
+
+static stored($app){
+	$file = static::file($app)
+	if (!is_file($file)) return null
+	$data = json_decode((string)file_get_contents($file), true)
+	return is_array($data) && isset($data['home']) ? $data : null
+}
+
+static store($app, $data){
+	is_dir(static::dir()) || @mkdir(static::dir(), 0775, true)
+	$file = static::file($app)
+	json_write($file, $data)
+	$owner = fleet::webUser()
+	@chown($file, $owner)
+	@chgrp($file, $owner)
+	return $data
+}
+
+static products {
+	$user = auth::user()
+	$rows = []
+	foreach (fleet::nodes() AS $node){
+		if (!$user?->canServer($node)) continue
+		$feed = fleet::cached($node)
+		if (!$feed) continue
+		$visitors = (array)($feed['visitors'] ?? [])
+		$errors = (array)($feed['errors'] ?? [])
+		foreach ((array)($feed['apps'] ?? []) AS $app){
+			$slug = (string)($app['app'] ?? void)
+			$host = (string)($app['host'] ?? void)
+			if ($slug === void || $host === void) continue
+			$rows[] = $app + [
+				'node' => $node,
+				'nodeLabel' => (string)($feed['label'] ?? $node),
+				'visitors' => (int)($visitors[$host] ?? 0),
+				'errors' => (int)((($errors[$slug]['byHost'] ?? [])[$host]['occurrences']) ?? 0),
+			]
+		}
+	}
+	return static::group($rows)
+}
+
+static group($rows){
+	$byApp = []
+	foreach ($rows AS $row) $byApp[(string)$row['app']][] = $row
+	$out = []
+	foreach ($byApp AS $slug => $hosts){
+		$published = array_values(array_filter($hosts, fn($h) => static::isPublished($h)))
+		if (!$published) continue
+		usort($published, fn($a, $c) => ((($c['env'] ?? void) === 'prod') <=> (($a['env'] ?? void) === 'prod')) ?: (strlen($a['host']) <=> strlen($c['host'])))
+		$face = $published[0]
+		$layers = array_values(array_filter($hosts, fn($h) => $h['host'] !== $face['host']))
+		usort($layers, fn($a, $c) => (static::rank($a) <=> static::rank($c)) ?: strcmp($a['host'], $c['host']))
+		$out[$slug] = ['app' => $slug, 'face' => $face, 'layers' => $layers]
+	}
+	uasort($out, fn($a, $c) => ((int)$c['face']['visitors'] <=> (int)$a['face']['visitors']) ?: strcmp($a['face']['host'], $c['face']['host']))
+	return $out
+}
+
+static isPublished($h) => !empty($h['seo']) && !empty($h['indexable']) && empty($h['redirect'])
+
+static rank($h){
+	if (!empty($h['redirect'])) return 4
+	if (static::isPublished($h)) return 1
+	return ($h['env'] ?? void) === 'dev' ? 3 : 2
+}
+
+static envLabel($h){
+	if (!empty($h['redirect'])) return 'redirect'
+	if (($h['env'] ?? void) === 'dev') return 'dev'
+	return static::isPublished($h) ? 'live' : 'staging'
+}
+
+static GET($url){
+	try {
+		return (string)HTTP($url, ['Accept: text/html,application/xhtml+xml,application/xml'], agent: 'PhloDashboard/1.0 (+preview)', timeout: 8)
+	}
+	catch (\Throwable $e){
+		return null
+	}
+}
+
+static fetch($host){
+	$base = 'https://'.$host
+	$html = static::GET($base.slash)
+	if ($html === null) return null
+	$map = static::GET($base.'/sitemap.xml')
+	return [
+		'host' => $host,
+		'fetched' => time(),
+		'home' => static::meta($html, $base),
+		'pages' => $map === null ? [] : static::pages($map),
+	]
+}
+
+static metaTags($html){
+	$out = []
+	foreach (regex_all('~<meta\s[^>]*>~i', (string)$html)[0] ?? [] AS $tag){
+		$key = regex('~\b(?:property|name)\s*=\s*(?:(["\'])(.*?)\1|([^\s>]+))~i', $tag)
+		$val = regex('~\bcontent\s*=\s*(?:(["\'])(.*?)\1|([^\s>]+))~is', $tag)
+		$name = strtolower(trim((string)(($key[2] ?? void) !== void ? $key[2] : ($key[3] ?? void))))
+		if ($name === void || isset($out[$name])) continue
+		$out[$name] = html_entity_decode(trim((string)(($val[2] ?? void) !== void ? $val[2] : ($val[3] ?? void))), ENT_QUOTES | ENT_HTML5, 'UTF-8')
+	}
+	return $out
+}
+
+static meta($html, $base = void){
+	$tags = static::metaTags($html)
+	$title = (string)($tags['og:title'] ?? void)
+	if ($title === void) $title = html_entity_decode(trim((string)(regex('~<title[^>]*>(.*?)</title>~is', (string)$html)[1] ?? void)), ENT_QUOTES | ENT_HTML5, 'UTF-8')
+	return [
+		'title' => $title,
+		'descr' => (string)($tags['og:description'] ?? $tags['description'] ?? void),
+		'image' => static::absolute((string)($tags['og:image'] ?? void), $base),
+		'site' => (string)($tags['og:site_name'] ?? void),
+		'url' => (string)($tags['og:url'] ?? void),
+	]
+}
+
+static absolute($url, $base){
+	if ($url === void || $base === void || is_absolute_url($url)) return $url
+	return rtrim($base, slash).slash.ltrim($url, slash)
+}
+
+static pages($xml){
+	$pages = []
+	foreach (regex_all('~<url\b.*?</url>~is', (string)$xml)[0] ?? [] AS $block){
+		$loc = (string)(regex('~<loc>(.*?)</loc>~is', $block)[1] ?? void)
+		if (trim($loc) === void) continue
+		$alt = []
+		foreach (regex_all('~<xhtml:link[^>]*>~i', $block)[0] ?? [] AS $link){
+			$lang = (string)(regex('~hreflang\s*=\s*["\']([^"\']+)["\']~i', $link)[1] ?? void)
+			$href = (string)(regex('~href\s*=\s*["\']([^"\']+)["\']~i', $link)[1] ?? void)
+			if ($lang === void || $href === void || $lang === 'x-default') continue
+			$alt[$lang] = static::path($href)
+		}
+		$pages[] = ['path' => static::path($loc), 'alt' => $alt]
+	}
+	return $pages
+}
+
+static path($url){
+	$path = (string)parse_url(trim(html_entity_decode((string)$url, ENT_QUOTES | ENT_HTML5, 'UTF-8')), PHP_URL_PATH)
+	return $path === void ? slash : $path
+}
+
+static grouped($pages){
+	$groups = []
+	foreach ((array)$pages AS $i => $page){
+		$path = (string)($page['path'] ?? slash)
+		$trimmed = trim($path, slash)
+		$group = ($trimmed === void || !str_contains($trimmed, slash)) ? slash : explode(slash, $trimmed)[0]
+		$groups[$group][$i] = $path
+	}
+	if (isset($groups[slash])) $groups = [slash => $groups[slash]] + $groups
+	return $groups
+}
+
+static langs($pages){
+	$langs = []
+	foreach ((array)$pages AS $page) foreach (array_keys((array)($page['alt'] ?? [])) AS $lang) $langs[$lang] = true
+	ksort($langs)
+	return array_keys($langs)
+}
+
+static preview($meta, $host){
+	$image = (string)($meta['image'] ?? void)
+	$shot = $image !== void ? tag('img', null, src: $image, alt: void, loading: 'lazy', decoding: 'async', class: 'pd-img') : tag('div', overview::icon('globe', 26), class: 'pd-img pd-noimg')
+	$domain = (string)(parse_url((string)($meta['url'] ?? void), PHP_URL_HOST) ?: $host)
+	$body = tag('span', esc(strtoupper($domain)), class: 'pd-domain')
+	$body .= tag('h3', esc((string)($meta['title'] ?? void)) ?: en('No title'), class: 'pd-title')
+	$body .= tag('p', esc((string)($meta['descr'] ?? void)) ?: tag('em', en('No description')), class: 'pd-descr')
+	return $shot.tag('div', $body, class: 'pd-body')
+}
+
+static previewBox($app, $meta, $host) => tag('div', static::preview($meta, $host), id: static::previewId($app), class: 'pd-preview')
+
+static blank($app){
+	$body = tag('p', en('No preview loaded yet.'), class: 'pd-descr').tag('button', en('Load preview'), type: 'button', data_app: $app, class: 'pd-btn pd-load')
+	$inner = tag('div', overview::icon('eye', 26), class: 'pd-img pd-noimg').tag('div', $body, class: 'pd-body')
+	return tag('div', $inner, id: static::previewId($app), class: 'pd-preview pd-blank')
+}
+
+static picker($app, $pages){
+	if (!$pages) return void
+	$options = void
+	foreach (static::grouped($pages) AS $group => $paths){
+		$items = void
+		foreach ($paths AS $i => $path) $items .= tag('option', esc($path), value: $i)
+		$options .= tag('optgroup', $items, label: $group === slash ? en('Pages') : slash.$group)
+	}
+	$picker = tag('label', overview::icon('panel', 13, 'muted').select($options, class: 'pd-page'), class: 'pd-pick')
+	$langs = static::langs($pages)
+	if ($langs){
+		$items = tag('option', en('Default'), value: void)
+		foreach ($langs AS $lang) $items .= tag('option', esc(strtoupper($lang)), value: $lang)
+		$picker .= tag('label', overview::icon('globe', 13, 'muted').select($items, class: 'pd-lang'), class: 'pd-pick pd-pick-lang')
+	}
+	return tag('div', $picker, class: 'pd-picker')
+}
+
+static ops($face){
+	$stats = overview::statusCell((int)($face['code'] ?? 0), (int)($face['ms'] ?? 0))
+	if ((int)$face['visitors']) $stats .= tag('a', overview::icon('eye', 12).tag('span', (string)(int)$face['visitors']), href: '/visitors/q='.rawurlencode((string)$face['host']), target: '_blank', class: 'pd-stat')
+	if ((int)$face['errors']) $stats .= tag('a', overview::icon('alert', 12).tag('span', (string)(int)$face['errors']), href: '/errors/'.rawurlencode((string)$face['node']).'/'.rawurlencode((string)$face['app']), class: 'pd-stat async pd-err')
+	$stats .= tag('span', overview::icon('server', 12).tag('span', esc((string)$face['nodeLabel'])), class: 'pd-stat')
+	return tag('div', $stats, class: 'pd-ops')
+}
+
+static layers($layers){
+	if (!$layers) return void
+	$rows = void
+	foreach ($layers AS $layer){
+		$env = static::envLabel($layer)
+		$state = overview::envState((int)($layer['code'] ?? 0))
+		$row = tag('span', void, class: 'st-dot '.$state).tag('span', esc((string)$layer['host']), class: 'pd-layer-host')
+		$rows .= tag('span', $row.tag('span', $env, class: 'pd-layer-env '.$env), class: 'pd-layer')
+	}
+	return tag('div', $rows, class: 'pd-layers')
+}
+
+static card($product, $meta = null){
+	$app = (string)$product['app']
+	$face = $product['face']
+	$host = (string)$face['host']
+	$name = trim((string)($meta['home']['site'] ?? void)) ?: (trim((string)($meta['home']['title'] ?? void)) ?: $host)
+	$head = tag('h2', esc($name), class: 'pd-name').tag('a', overview::icon('external', 13), href: 'https://'.$host.slash, target: '_blank', title: $host, class: 'pd-open')
+	$body = tag('div', $head, class: 'pd-head')
+	$body .= $meta ? static::previewBox($app, (array)$meta['home'], $host) : static::blank($app)
+	$body .= static::picker($app, (array)($meta['pages'] ?? []))
+	$body .= static::ops($face)
+	$body .= static::layers($product['layers'])
+	if ($meta){
+		$pages = (array)($meta['pages'] ?? [])
+		$foot = tag('span', $pages ? en('%d pages', count($pages)) : en('no sitemap'), class: 'pd-age')
+		$foot .= tag('span', time_human((int)($meta['fetched'] ?? time())).' '.en('old'), class: 'pd-age')
+		$foot .= tag('button', overview::icon('refresh', 12), type: 'button', data_app: $app, title: en('Refresh preview'), class: 'pd-btn pd-load pd-refresh')
+		$body .= tag('div', $foot, class: 'pd-foot')
+	}
+	return tag('article', $body, id: static::id($app), class: 'pd-card', data_app: $app, data_empty: $meta ? null : true)
+}
+
+static view {
+	$products = static::products()
+	if (!$products) return tag('div', tag('p', en('No published sites found in the fleet yet.'), class: 'pd-none'), class: 'pd-wrap')
+	$cards = void
+	$empty = 0
+	foreach ($products AS $slug => $product){
+		$meta = static::stored($slug)
+		$meta === null && $empty++
+		$cards .= static::card($product, $meta)
+	}
+	$bar = tag('span', en('%d products', count($products)), class: 'pd-count')
+	if ($empty) $bar .= tag('button', en('Load %d previews', $empty), type: 'button', id: 'pd-all', class: 'pd-btn primary')
+	$bar = tag('div', $bar, class: 'pd-bar')
+	return tag('div', $bar.tag('section', $cards, class: 'pd-grid'), class: 'pd-wrap')
+}
+
+route both GET products {
+	%app->active = 'product'
+	main(static::view(), en('Products'))
+}
+
+route async GET product load $app {
+	$product = static::products()[$app] ?? null
+	if (!$product) return apply(error: en('Unknown product'))
+	$data = static::fetch((string)$product['face']['host'])
+	if (!$data) return apply(error: en('Could not reach %s', (string)$product['face']['host']))
+	static::store($app, $data)
+	return apply(outer: ['#'.static::id($app) => static::card($product, $data)])
+}
+
+// $i indexes the stored sitemap, so the fetched URL can only ever be one the site published itself.
+route async GET product page $app $i $lang= {
+	$product = static::products()[$app] ?? null
+	$meta = static::stored($app)
+	if (!$product || !$meta) return apply(error: en('Unknown product'))
+	$page = ((array)($meta['pages'] ?? []))[(int)$i] ?? null
+	if (!$page) return apply(error: en('Unknown page'))
+	$host = (string)$product['face']['host']
+	$path = (string)((($lang ?? void) !== void ? (((array)($page['alt'] ?? []))[$lang] ?? $page['path']) : $page['path']))
+	$html = static::GET('https://'.$host.$path)
+	if ($html === null) return apply(error: en('Could not reach %s', $host.$path))
+	return apply(outer: ['#'.static::previewId($app) => static::previewBox($app, static::meta($html, 'https://'.$host), $host)])
+}
+
+<script>
+on('click', '.pd-load', el => app.get('product/load/' + el.dataset.app, false))
+
+on('click', '#pd-all', () => objects('.pd-card[data-empty] .pd-load').forEach(el => app.get('product/load/' + el.dataset.app, false)))
+
+on('change', '.pd-page, .pd-lang', el => {
+	const card = el.closest('.pd-card')
+	const page = card.querySelector('.pd-page')
+	const lang = card.querySelector('.pd-lang')
+	app.get('product/page/' + card.dataset.app + '/' + page.value + (lang && lang.value ? '/' + lang.value : ''), false)
+})
+</script>
+
+<style>
+.pd-bar {
+	align-items: center
+	display: flex
+	gap: 10px
+	justify-content: space-between
+	margin-bottom: 12px
+}
+.pd-count {
+	color: $muted
+	font-size: 13px
+}
+.pd-grid {
+	display: grid
+	gap: 12px
+	grid-template-columns: repeat(auto-fill, minmax(320px, 1fr))
+}
+.pd-card {
+	background: $surface
+	border: 1px solid $border
+	border-radius: 14px
+	display: flex
+	flex-direction: column
+	overflow: hidden
+}
+.pd-head {
+	align-items: center
+	display: flex
+	gap: 8px
+	justify-content: space-between
+	padding: 10px 12px
+}
+.pd-name {
+	color: $text
+	font-size: 15px
+	font-weight: 600
+	overflow: hidden
+	text-overflow: ellipsis
+	white-space: nowrap
+}
+.pd-open {
+	color: $muted
+	display: flex
+	flex-shrink: 0
+}
+.pd-open:hover {
+	color: $primary
+}
+.pd-preview {
+	background: $bg
+	border-block: 1px solid $border
+}
+.pd-img {
+	aspect-ratio: 1.91 / 1
+	display: block
+	object-fit: cover
+	width: 100%
+}
+.pd-noimg {
+	align-items: center
+	color: $muted
+	display: flex
+	justify-content: center
+}
+.pd-body {
+	display: flex
+	flex-direction: column
+	gap: 3px
+	padding: 10px 12px
+}
+.pd-domain {
+	color: $muted
+	font-size: 10px
+	letter-spacing: .6px
+}
+.pd-title {
+	color: $text
+	font-size: 14px
+	font-weight: 600
+	line-height: 1.3
+}
+.pd-descr {
+	color: $muted
+	display: -webkit-box
+	-webkit-box-orient: vertical
+	-webkit-line-clamp: 2
+	font-size: 12px
+	line-height: 1.45
+	overflow: hidden
+}
+.pd-blank .pd-body {
+	align-items: flex-start
+	gap: 8px
+}
+.pd-picker {
+	display: flex
+	gap: 6px
+	padding: 8px 12px 0
+}
+.pd-pick {
+	align-items: center
+	background: $bg
+	border: 1px solid $border
+	border-radius: 8px
+	color: $muted
+	display: flex
+	flex: 1
+	gap: 6px
+	min-width: 0
+	padding: 0 8px
+}
+.pd-pick-lang {
+	flex: 0 0 auto
+}
+.pd-pick select {
+	background: none
+	border: 0
+	color: $text
+	font-size: 12px
+	max-width: 100%
+	outline: none
+	padding: 6px 0
+}
+.pd-ops {
+	align-items: center
+	display: flex
+	flex-wrap: wrap
+	gap: 10px
+	padding: 10px 12px 0
+}
+.pd-stat {
+	align-items: center
+	color: $muted
+	display: flex
+	font-size: 12px
+	gap: 4px
+	text-decoration: none
+}
+.pd-err {
+	color: $error
+}
+.pd-layers {
+	display: flex
+	flex-direction: column
+	gap: 3px
+	padding: 8px 12px 0
+}
+.pd-layer {
+	align-items: center
+	display: flex
+	font-size: 11px
+	gap: 6px
+}
+.pd-layer-host {
+	color: $muted
+	overflow: hidden
+	text-overflow: ellipsis
+	white-space: nowrap
+}
+.pd-layer-env {
+	background: color-mix(in srgb, $surface 80%, $text)
+	border-radius: 3px
+	color: $muted
+	font-size: 9px
+	letter-spacing: .5px
+	margin-left: auto
+	padding: 1px 4px
+	text-transform: uppercase
+}
+.pd-layer-env.live {
+	color: $primary
+}
+.pd-foot {
+	align-items: center
+	color: $muted
+	display: flex
+	font-size: 11px
+	gap: 8px
+	margin-top: auto
+	padding: 10px 12px
+}
+.pd-refresh {
+	margin-left: auto
+	padding: 4px
+}
+.pd-btn {
+	align-items: center
+	background: $bg
+	border: 1px solid $border
+	border-radius: 8px
+	color: $text
+	cursor: pointer
+	display: flex
+	font-size: 12px
+	gap: 6px
+	padding: 6px 10px
+}
+.pd-btn:hover {
+	border-color: $primary
+	color: $primary
+}
+.pd-btn.primary {
+	background: $primary
+	border-color: $primary
+	color: $on-primary
+}
+.pd-none {
+	color: $muted
+	padding: 16px
+}
+@media (max-width: 600px){
+	.pd-grid: grid-template-columns: 1fr
+}
+</style>

@@ -21,6 +21,7 @@ prop menu {
 		'graph'    => ['icon' => '🕸️', 'uri' => 'graph', 'title' => 'Graph', 'admin' => false],
 		'domain'   => ['icon' => '🌍', 'uri' => 'domains',  'title' => 'Domains', 'admin' => true],
 		'site'     => ['icon' => '🌐', 'uri' => 'sites',    'title' => 'Sites', 'admin' => true],
+		'product'  => ['icon' => '📦', 'uri' => 'products', 'title' => 'Products', 'admin' => false],
 		'whatsapp' => ['icon' => '💬', 'uri' => 'whatsapp', 'title' => 'WhatsApp', 'admin' => true],
 		'message'  => ['icon' => '🔔', 'uri' => 'messages', 'title' => 'Notifications', 'admin' => false],
 		'subscription' => ['icon' => '📡', 'uri' => 'subscriptions', 'title' => 'Subscriptions', 'admin' => true],

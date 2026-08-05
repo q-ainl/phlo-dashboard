@@ -99,7 +99,8 @@
         "message",
         "subscription",
         "dbadmin",
-        "backup"
+        "backup",
+        "product"
     ],
     "paths": {
         "resources": [

@@ -168,4 +168,76 @@ final class DashboardSmokeTest extends TestCase {
 		$this->assertMatchesRegularExpression('/<details[^>]*\bopen\b/', $single, 'a single backup entry is expanded by default');
 		$this->assertDoesNotMatchRegularExpression('/<details[^>]*\bopen\b/', $multi, 'one of several entries stays collapsed');
 	}
+
+	public function testProductCardReadsPublicMetadataAndRendersBothStates():void {
+		// Parsing and rendering are pure functions over fetched strings, so the whole card is exercised here
+		// without touching the network. en() is the shim app.phlo installs on a web request.
+		$src = <<<'PHLO'
+		if (!function_exists('en')){function en($t, ...$a){return $a ? sprintf($t, ...$a) : $t;}}
+		$html = '<html><head><title>Fallback</title><meta property="og:title" content="Phlo &amp; Co"><meta property="og:description" content="One language."><meta property="og:image" content="/icon.webp"><meta property="og:site_name" content="Phlo"></head></html>'
+		$xml = '<urlset><url><loc>https://phlo.tech/</loc><xhtml:link rel="alternate" hreflang="x-default" href="https://phlo.tech/"/><xhtml:link rel="alternate" hreflang="nl" href="https://phlo.tech/nl"/></url><url><loc>https://phlo.tech/docs/views</loc></url></urlset>'
+		$face = ['host' => 'phlo.tech', 'app' => 'phlo.tech', 'env' => 'prod', 'code' => 200, 'ms' => 42, 'node' => 'qai', 'nodeLabel' => 'Q-AI', 'visitors' => 1652, 'errors' => 0, 'seo' => true, 'indexable' => true]
+		$layers = [['host' => 'stage.phlo.tech', 'env' => 'prod', 'code' => 200, 'seo' => true, 'indexable' => false], ['host' => 'dev.phlo.tech', 'env' => 'dev', 'code' => 401]]
+		$product = ['app' => 'phlo.tech', 'face' => $face, 'layers' => $layers]
+		$pages = product::pages($xml)
+		$meta = ['host' => 'phlo.tech', 'fetched' => time() - 7200, 'home' => product::meta($html, 'https://phlo.tech'), 'pages' => $pages]
+		return ['home' => $meta['home'], 'pages' => $pages, 'groups' => array_keys(product::grouped($pages)), 'langs' => product::langs($pages), 'card' => product::card($product, $meta), 'blank' => product::card($product, null)]
+		PHLO;
+		[$code, $out, $err] = self::cli('phlo_eval', $src);
+		$this->assertSame(0, $code, "phlo_eval failed:\n$out$err");
+		$r = json_decode(trim($out), true);
+		$this->assertIsArray($r, "product render output decoded:\n$out");
+		// og:* wins over the plain title, entities are decoded and a relative image resolves against the site.
+		$this->assertSame('Phlo & Co', $r['home']['title']);
+		$this->assertSame('https://phlo.tech/icon.webp', $r['home']['image'], 'a relative og:image resolves against the site, never against the dashboard');
+		// The sitemap carries the page list and the language alternates the picker needs.
+		$this->assertSame(['/', '/docs/views'], array_column($r['pages'], 'path'));
+		$this->assertSame(['nl' => '/nl'], $r['pages'][0]['alt'], 'hreflang alternates are kept as paths, x-default is dropped');
+		$this->assertSame(['/', 'docs'], $r['groups'], 'pages group by first path segment with the root level first');
+		$this->assertSame(['nl'], $r['langs']);
+		// A loaded card shows the preview, both pickers and the sitemap count.
+		$this->assertStringContainsString('<img src="https://phlo.tech/icon.webp"', $r['card'], 'the preview deep links the image instead of storing it');
+		$this->assertStringContainsString('loading="lazy"', $r['card']);
+		$this->assertStringContainsString('Phlo &amp; Co', $r['card'], 'remote metadata is escaped on output');
+		$this->assertStringContainsString('<option value="1">/docs/views</option>', $r['card']);
+		$this->assertStringContainsString('class="pd-lang"', $r['card']);
+		$this->assertStringContainsString('2 pages', $r['card']);
+		$this->assertStringContainsString('2 hours old', $r['card'], 'the card says how old its preview is instead of refreshing itself');
+		// Other hosts of the same app are layers on this card, classified without asking the host anything.
+		$this->assertStringContainsString('>staging</span>', $r['card'], 'a prod build that is not published reads as staging');
+		$this->assertStringContainsString('>dev</span>', $r['card']);
+		$this->assertStringNotContainsString('<article', substr($r['card'], 1), 'every environment stays inside the one product card');
+		// Without a stored preview the card is an explicit empty state: no picker, no fetch, just a button.
+		$this->assertStringContainsString('data-empty', $r['blank']);
+		$this->assertStringContainsString('Load preview', $r['blank']);
+		$this->assertStringNotContainsString('pd-page', $r['blank'], 'the page picker only exists once a sitemap has been stored');
+	}
+
+	public function testProductsGroupEveryEnvironmentUnderOnePublishedHost():void {
+		// The rows are what the fleet caches hand over: one record per discovered host, from several nodes.
+		$src = <<<'PHLO'
+		$rows = [
+			['app' => 'phlo.tech', 'host' => 'stage.phlo.tech', 'env' => 'prod', 'node' => 'local', 'visitors' => 14, 'seo' => true, 'indexable' => false],
+			['app' => 'phlo.tech', 'host' => 'dev.phlo.tech', 'env' => 'dev', 'node' => 'local', 'visitors' => 0, 'seo' => true, 'indexable' => false],
+			['app' => 'phlo.tech', 'host' => 'phlo.tech', 'env' => 'prod', 'node' => 'qai', 'visitors' => 1652, 'seo' => true, 'indexable' => true],
+			['app' => 'logbook.tools', 'host' => 'logbook.tools', 'env' => 'prod', 'node' => 'qai', 'visitors' => 673, 'seo' => true, 'indexable' => true],
+			['app' => 'logbook.tools', 'host' => 'jumplog.nl', 'env' => 'prod', 'node' => 'qai', 'visitors' => 177, 'seo' => true, 'indexable' => true, 'redirect' => true],
+			['app' => 'files', 'host' => 'files.q-ai.nl', 'env' => 'prod', 'node' => 'qai', 'visitors' => 3, 'seo' => false, 'indexable' => false],
+		]
+		$out = product::group($rows)
+		return ['apps' => array_keys($out), 'face' => loop($out, fn($p) => $p['face']['host']), 'layers' => loop($out, fn($p) => loop($p['layers'], fn($l) => $l['host'].':'.product::envLabel($l)))]
+		PHLO;
+		[$code, $out, $err] = self::cli('phlo_eval', $src);
+		$this->assertSame(0, $code, "phlo_eval failed:\n$out$err");
+		$r = json_decode(trim($out), true);
+		$this->assertIsArray($r, "product::group output decoded:\n$out");
+		// An app with no published host is not a product; the rest sort by the visitors of their public face.
+		$this->assertSame(['phlo.tech', 'logbook.tools'], $r['apps'], 'only apps with a published host become products, busiest first');
+		// The published host is the face even though its stage and dev siblings live on another node.
+		$this->assertSame('phlo.tech', $r['face']['phlo.tech']);
+		$this->assertSame(['stage.phlo.tech:staging', 'dev.phlo.tech:dev'], $r['layers']['phlo.tech'], 'the other environments become layers on that one card, staging before dev');
+		// A redirect alias never wins the face, it hangs underneath as a layer.
+		$this->assertSame('logbook.tools', $r['face']['logbook.tools']);
+		$this->assertSame(['jumplog.nl:redirect'], $r['layers']['logbook.tools']);
+	}
 }

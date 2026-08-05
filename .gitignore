@@ -37,6 +37,7 @@ www/q/
 *.tmp
 .DS_Store
 data/fleet/
+data/products/
 
 # SQLite databases
 data/*.db

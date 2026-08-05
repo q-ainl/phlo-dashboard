@@ -54,9 +54,29 @@ static webUser => (string)(%creds->node?->webuser ?? 'frankenphp')
 // Shell command that restarts the local realtime websocket server (pm2). Configurable per node.
 static wsRestart => (string)(%creds->whatsapp?->restart ?? 'HOME=/var/lib/frankenphp /usr/local/bin/pm2 restart websocket 2>&1')
 
-static env($block){
-	$root = static::rootFromBlock($block)
-	return $root && preg_match('/\bbuild\s*:\s*true\b/', (string)@file_get_contents($root.'/www/app.php')) ? 'dev' : 'prod'
+static env($block) => static::envFrom(static::rootFromBlock($block))
+
+static envFrom($root) => $root && preg_match('/\bbuild\s*:\s*true\b/', (string)@file_get_contents($root.'/www/app.php')) ? 'dev' : 'prod'
+
+// Is this host a published site? Read from the node's own disk: the seo resource has to be compiled in (it
+// owns sitemap.xml, robots.txt and the OG head) and the entrypoint has to declare `indexable`. A dev root
+// keeps its compiled resources in php/, a deployed root has them flattened next to the entry.
+static publicFlags($root){
+	if (!$root) return ['seo' => false, 'indexable' => false]
+	return [
+		'seo' => is_file($root.'/php/seo.php') || is_file($root.'/seo.php'),
+		'indexable' => static::indexableFrom((string)@file_get_contents($root.'/www/app.php')),
+	]
+}
+
+// Line by line with comments stripped, so a commented-out example line never counts (same rule as host::controlFrom).
+static indexableFrom($src){
+	foreach (explode(lf, (string)$src) AS $line){
+		$code = trim(explode('//', $line, 2)[0])
+		if ($code === void || $code[0] === '#') continue
+		if (preg_match('/\bindexable\s*:\s*true\b/', $code)) return true
+	}
+	return false
 }
 static rootFromBlock($block){
 	if ($r = regex('/^\s*root\s+\*?\s*(\S+)/m', $block)[1] ?? void) return static::stripWww($r)
@@ -137,7 +157,8 @@ static caddyApps {
 		}
 		if ($hosts !== null) $blocks[] = ['hosts' => $hosts, 'block' => $buf]
 		foreach ($blocks AS $b){
-			$env = static::env($b['block'])
+			$root = static::rootFromBlock($b['block'])
+			$env = static::envFrom($root)
 			$hostnames = []
 			foreach (explode(',', $b['hosts']) AS $host){
 				$host = trim($host)
@@ -160,7 +181,7 @@ static caddyApps {
 					else $pureRedirect = true
 				}
 			}
-			$apps[] = static::normalizeApp($appName, $hostnames, $redirected, $pureRedirect, $env)
+			$apps[] = static::normalizeApp($appName, $hostnames, $redirected, $pureRedirect, $env) + static::publicFlags($root)
 		}
 	}
 	return $apps
@@ -192,7 +213,8 @@ static nginxApps {
 			}
 			if (!$hostnames) continue
 			$pureRedirect = (bool)preg_match('/\breturn\s+30\d\b/', $block) || (bool)preg_match('/\brewrite\b[^;]+\b(permanent|redirect)\s*;/', $block)
-			$rec = static::normalizeApp($appName, $hostnames, [], $pureRedirect, 'prod')
+			$root = ($r = regex('/^\s*root\s+(\S+?)\s*;/m', $block)[1] ?? void) ? static::stripWww($r) : void
+			$rec = static::normalizeApp($appName, $hostnames, [], $pureRedirect, 'prod') + static::publicFlags($root)
 			$key = $rec['host']
 			if (!isset($byHost[$key]) || ($byHost[$key]['redirect'] && !$rec['redirect'])) $byHost[$key] = $rec
 		}
