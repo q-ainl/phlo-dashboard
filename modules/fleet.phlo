@@ -60,12 +60,14 @@ static envFrom($root) => $root && preg_match('/\bbuild\s*:\s*true\b/', (string)@
 
 // Is this host a published site? Read from the node's own disk: the seo resource has to be compiled in (it
 // owns sitemap.xml, robots.txt and the OG head) and the entrypoint has to declare `indexable`. A dev root
-// keeps its compiled resources in php/, a deployed root has them flattened next to the entry.
-static publicFlags($root){
+// keeps its compiled resources in php/, a deployed root has them flattened next to the entry. The
+// entrypoint is data/app.php on a deployed root and www/app.php on a dev root, so read both.
+static publicFlags($root, $env = 'prod'){
 	if (!$root) return ['seo' => false, 'indexable' => false]
+	$entry = $env === 'dev' ? $root.'/www/app.php' : $root.'/data/app.php'
 	return [
 		'seo' => is_file($root.'/php/seo.php') || is_file($root.'/seo.php'),
-		'indexable' => static::indexableFrom((string)@file_get_contents($root.'/www/app.php')),
+		'indexable' => static::indexableFrom((string)@file_get_contents($entry)),
 	]
 }
 
@@ -181,7 +183,7 @@ static caddyApps {
 					else $pureRedirect = true
 				}
 			}
-			$apps[] = static::normalizeApp($appName, $hostnames, $redirected, $pureRedirect, $env) + static::publicFlags($root)
+			$apps[] = static::normalizeApp($appName, $hostnames, $redirected, $pureRedirect, $env) + static::publicFlags($root, $env)
 		}
 	}
 	return $apps
