@@ -83,6 +83,37 @@ static envLabel($h){
 	return static::isPublished($h) ? 'live' : 'staging'
 }
 
+// The environments you can preview: the published face first, then its layers. Redirect aliases are left out,
+// they only answer with a 30x. The position in this list is the env index the routes take.
+static hosts($product){
+	$hosts = [$product['face']]
+	foreach ((array)($product['layers'] ?? []) AS $layer) if (empty($layer['redirect'])) $hosts[] = $layer
+	return $hosts
+}
+
+// What distinguishes a layer from the face: stage.phlo.tech under phlo.tech reads as 'stage'. A host on another
+// domain keeps its full name.
+static envName($host, $face){
+	if ((string)$host === (string)$face) return en('live')
+	return str_ends_with((string)$host, dot.$face) ? substr((string)$host, 0, -strlen((string)$face) - 1) : (string)$host
+}
+
+// Turns the (env, page, lang) a card is showing into an address. Every part is an index into data the fleet or
+// the site itself produced, so this can only ever resolve to a page the site published.
+static resolve($app, $env = 0, $i = -1, $lang = void){
+	$product = static::products()[$app] ?? null
+	if (!$product) return null
+	$host = static::hosts($product)[(int)$env] ?? null
+	if (!$host) return null
+	$path = slash
+	if ((int)$i >= 0){
+		$page = ((array)((static::stored($app) ?? [])['pages'] ?? []))[(int)$i] ?? null
+		if (!$page) return null
+		$path = (string)($lang !== void ? (((array)($page['alt'] ?? []))[$lang] ?? $page['path']) : $page['path'])
+	}
+	return ['app' => (string)$app, 'host' => (string)$host['host'], 'url' => 'https://'.$host['host'].$path, 'env' => (int)$env, 'i' => (int)$i, 'lang' => $lang]
+}
+
 static GET($url){
 	try {
 		return (string)HTTP($url, ['Accept: text/html,application/xhtml+xml,application/xml'], agent: 'PhloDashboard/1.0 (+preview)', timeout: 8)
@@ -95,28 +126,23 @@ static GET($url){
 // Preview images come from other hosts, and a strict img-src would block them. They are served from our own
 // origin instead: the URL is never taken from the request but read from the stored preview, so this can only
 // ever fetch an address the site itself published. The bytes are cached next to that preview.
-static shotFile($app) => static::dir().static::key($app).'.img'
+static shotFile($app, $env = 0, $i = -1, $lang = void) => static::dir().static::key($app).'.img.'.(int)$env.dot.((int)$i < 0 ? 'home' : (int)$i).($lang !== void ? dash.static::key((string)$lang) : void)
 
 // The image address is resolved here, never taken from the request: the home preview reads it from the stored
 // file, a subpage reads it from the page the stored sitemap points at. Both can only be an address the site
 // itself published.
-static shotUrl($app, $i = void, $lang = void){
-	if ($i === void) return (string)(((array)(static::stored($app)['home'] ?? []))['image'] ?? void)
-	$product = static::products()[$app] ?? null
-	$meta = static::stored($app)
-	if (!$product || !$meta) return void
-	$page = ((array)($meta['pages'] ?? []))[(int)$i] ?? null
-	if (!$page) return void
-	$host = (string)$product['face']['host']
-	$path = (string)(($lang !== void) ? (((array)($page['alt'] ?? []))[$lang] ?? $page['path']) : $page['path'])
-	$html = static::GET('https://'.$host.$path)
-	return $html === null ? void : (string)(static::meta($html, 'https://'.$host)['image'] ?? void)
+static shotUrl($app, $env = 0, $i = -1, $lang = void){
+	if ((int)$env === 0 && (int)$i < 0) return (string)(((array)((static::stored($app) ?? [])['home'] ?? []))['image'] ?? void)
+	$view = static::resolve($app, $env, $i, $lang)
+	if (!$view) return void
+	$html = static::GET($view['url'])
+	return $html === null ? void : (string)(static::meta($html, 'https://'.$view['host'])['image'] ?? void)
 }
 
-static shot($app, $i = void, $lang = void){
-	$file = static::shotFile($app).($i === void ? void : '.'.static::key((string)$i.($lang !== void ? '-'.$lang : void)))
+static shot($app, $env = 0, $i = -1, $lang = void){
+	$file = static::shotFile($app, $env, $i, $lang)
 	if (is_file($file) && filemtime($file) > time() - 86400) return (string)file_get_contents($file)
-	$url = static::shotUrl($app, $i, $lang)
+	$url = static::shotUrl($app, $env, $i, $lang)
 	if ($url === void || !is_absolute_url($url)) return null
 	try {
 		$bytes = (string)HTTP($url, agent: 'PhloDashboard/1.0 (+preview)', timeout: 8)
@@ -219,26 +245,43 @@ static langs($pages){
 	return array_keys($langs)
 }
 
-static preview($meta, $host, $app = void, $i = void, $lang = void){
+static preview($view, $meta){
 	$image = (string)($meta['image'] ?? void)
-	$src = $app !== void ? '/product/image/'.rawurlencode((string)$app).($i === void ? void : slash.rawurlencode((string)$i).($lang !== void ? slash.rawurlencode((string)$lang) : void)) : $image
-	// A site can advertise an og:image that no longer resolves; then there is nothing to show and the
-	// placeholder is the honest answer, instead of a broken picture in the card.
-	$has = $image !== void && ($app === void || static::shot($app, $i, $lang) !== null)
-	$shot = $has ? tag('img', null, src: $src, alt: void, loading: 'lazy', decoding: 'async', class: 'pd-img') : tag('div', overview::icon('globe', 26), class: 'pd-img pd-noimg')
-	$domain = (string)(parse_url((string)($meta['url'] ?? void), PHP_URL_HOST) ?: $host)
+	$src = '/product/image/'.rawurlencode((string)$view['app']).slash.(int)$view['env'].slash.(int)$view['i'].(($view['lang'] ?? void) !== void ? slash.rawurlencode((string)$view['lang']) : void)
+	// Rendering never fetches: the image is requested by the browser, and one that no longer resolves is
+	// swapped for the placeholder on error instead of leaving a broken picture in the card.
+	$shot = $image !== void ? tag('img', null, src: $src, alt: void, loading: 'lazy', decoding: 'async', class: 'pd-img') : tag('div', overview::icon('globe', 26), class: 'pd-img pd-noimg')
+	$domain = (string)(parse_url((string)($meta['url'] ?? void), PHP_URL_HOST) ?: $view['host'])
 	$body = tag('span', esc(strtoupper($domain)), class: 'pd-domain')
 	$body .= tag('h3', esc((string)($meta['title'] ?? void)) ?: en('No title'), class: 'pd-title')
 	$body .= tag('p', esc((string)($meta['descr'] ?? void)) ?: tag('em', en('No description')), class: 'pd-descr')
 	return $shot.tag('div', $body, class: 'pd-body')
 }
 
-static previewBox($app, $meta, $host, $proxy = false, $i = void, $lang = void) => tag('div', static::preview($meta, $host, $proxy ? $app : void, $i, $lang), id: static::previewId($app), class: 'pd-preview')
+// The preview is a link to the page it shows, like the card a social platform would render. The SPA router
+// leaves it alone because it carries a target.
+static previewBox($view, $meta){
+	$url = (string)($meta['url'] ?? void) ?: (string)$view['url']
+	return tag('div', tag('a', static::preview($view, $meta), href: $url, target: '_blank', class: 'pd-link'), id: static::previewId((string)$view['app']), class: 'pd-preview')
+}
 
 static blank($app){
 	$body = tag('p', en('No preview loaded yet.'), class: 'pd-descr').tag('button', en('Load preview'), type: 'button', data_app: $app, class: 'pd-btn pd-load')
 	$inner = tag('div', overview::icon('eye', 26), class: 'pd-img pd-noimg').tag('div', $body, class: 'pd-body')
 	return tag('div', $inner, id: static::previewId($app), class: 'pd-preview pd-blank')
+}
+
+// One row of environments, always rendered so every card keeps the same height. Picking one previews that host
+// at the same path, which is the only reason to look at a stage copy in the first place.
+static envs($product, $current = 0){
+	$face = (string)$product['face']['host']
+	$out = void
+	foreach (static::hosts($product) AS $n => $host){
+		$dot = tag('span', void, class: 'st-dot '.overview::envState((int)($host['code'] ?? 0)))
+		$label = tag('span', esc(static::envName((string)$host['host'], $face)))
+		$out .= tag('button', $dot.$label, type: 'button', data_env: $n, title: (string)$host['host'], class: 'pd-env'.($n === (int)$current ? ' on' : void))
+	}
+	return tag('div', $out, class: 'pd-envs')
 }
 
 static picker($app, $pages){
@@ -259,37 +302,29 @@ static picker($app, $pages){
 	return tag('div', $picker, class: 'pd-picker')
 }
 
-static ops($face){
+// Name and fleet numbers share one line: the preview underneath already names the domain.
+static head($product, $meta){
+	$face = $product['face']
+	$host = (string)$face['host']
+	$name = trim((string)($meta['home']['site'] ?? void)) ?: (trim((string)($meta['home']['title'] ?? void)) ?: $host)
 	$stats = overview::statusCell((int)($face['code'] ?? 0), (int)($face['ms'] ?? 0))
-	if ((int)$face['visitors']) $stats .= tag('a', overview::icon('eye', 12).tag('span', (string)(int)$face['visitors']), href: '/visitors/q='.rawurlencode((string)$face['host']), target: '_blank', class: 'pd-stat')
-	if ((int)$face['errors']) $stats .= tag('a', overview::icon('alert', 12).tag('span', (string)(int)$face['errors']), href: '/errors/'.rawurlencode((string)$face['node']).'/'.rawurlencode((string)$face['app']), class: 'pd-stat async pd-err')
+	if ((int)$face['visitors']) $stats .= tag('a', overview::icon('eye', 12).tag('span', (string)(int)$face['visitors']), href: '/visitors/q='.rawurlencode($host), target: '_blank', class: 'pd-stat')
+	if ((int)$face['errors']) $stats .= tag('a', overview::icon('alert', 12).tag('span', (string)(int)$face['errors']), href: '/errors/'.rawurlencode((string)$face['node']).slash.rawurlencode((string)$face['app']), class: 'pd-stat async pd-err')
 	$stats .= tag('span', overview::icon('server', 12).tag('span', esc((string)$face['nodeLabel'])), class: 'pd-stat')
-	return tag('div', $stats, class: 'pd-ops')
-}
-
-static layers($layers){
-	if (!$layers) return void
-	$rows = void
-	foreach ($layers AS $layer){
-		$env = static::envLabel($layer)
-		$state = overview::envState((int)($layer['code'] ?? 0))
-		$row = tag('span', void, class: 'st-dot '.$state).tag('span', esc((string)$layer['host']), class: 'pd-layer-host')
-		$rows .= tag('span', $row.tag('span', $env, class: 'pd-layer-env '.$env), class: 'pd-layer')
-	}
-	return tag('div', $rows, class: 'pd-layers')
+	return tag('div', tag('h2', esc($name), class: 'pd-name').tag('div', $stats, class: 'pd-ops'), class: 'pd-head')
 }
 
 static card($product, $meta = null){
 	$app = (string)$product['app']
-	$face = $product['face']
-	$host = (string)$face['host']
-	$name = trim((string)($meta['home']['site'] ?? void)) ?: (trim((string)($meta['home']['title'] ?? void)) ?: $host)
-	$head = tag('h2', esc($name), class: 'pd-name').tag('a', overview::icon('external', 13), href: 'https://'.$host.slash, target: '_blank', title: $host, class: 'pd-open')
-	$body = tag('div', $head, class: 'pd-head')
-	$body .= $meta ? static::previewBox($app, (array)$meta['home'], $host, true) : static::blank($app)
+	$host = (string)$product['face']['host']
+	$body = static::head($product, $meta)
+	if ($meta){
+		$home = (array)$meta['home']
+		$body .= static::previewBox(['app' => $app, 'host' => $host, 'url' => 'https://'.$host.slash, 'env' => 0, 'i' => -1, 'lang' => void], $home)
+	}
+	else $body .= static::blank($app)
+	$body .= static::envs($product)
 	$body .= static::picker($app, (array)($meta['pages'] ?? []))
-	$body .= static::ops($face)
-	$body .= static::layers($product['layers'])
 	if ($meta){
 		$pages = (array)($meta['pages'] ?? [])
 		$foot = tag('span', $pages ? en('%d pages', count($pages)) : en('no sitemap'), class: 'pd-age')
@@ -332,39 +367,53 @@ route async GET product load $app {
 
 // Serves a preview image from our own origin, so a strict img-src keeps holding. $app only selects a stored
 // preview; the address that gets fetched comes from that file, never from the request.
-route GET product image $app $i= $lang= {
+route GET product image $app $env $i $lang= {
 	if (!isset(static::products()[$app])) return false
-	$bytes = static::shot($app, $i ?? void, $lang ?? void)
+	$bytes = static::shot($app, (int)$env, (int)$i, $lang ?? void)
 	if ($bytes === null) return false
 	%res->header('Cache-Control', 'private, max-age=86400')
 	return output($bytes, type: (string)(@getimagesizefromstring($bytes)['mime'] ?? 'application/octet-stream'))
 }
 
-// $i indexes the stored sitemap, so the fetched URL can only ever be one the site published itself.
-route async GET product page $app $i $lang= {
-	$product = static::products()[$app] ?? null
-	$meta = static::stored($app)
-	if (!$product || !$meta) return apply(error: en('Unknown product'))
-	$page = ((array)($meta['pages'] ?? []))[(int)$i] ?? null
-	if (!$page) return apply(error: en('Unknown page'))
-	$host = (string)$product['face']['host']
-	$path = (string)((($lang ?? void) !== void ? (((array)($page['alt'] ?? []))[$lang] ?? $page['path']) : $page['path']))
-	$html = static::GET('https://'.$host.$path)
-	if ($html === null) return apply(error: en('Could not reach %s', $host.$path))
-	return apply(outer: ['#'.static::previewId($app) => static::previewBox($app, static::meta($html, 'https://'.$host), $host, true, $i, $lang ?? void)])
+// The preview a card is showing: environment, page and language, each an index into what the fleet and the
+// site itself published. Fetched live and never stored, so it cannot go stale.
+route async GET product view $app $env $i $lang= {
+	$view = static::resolve($app, $env, $i, $lang ?? void)
+	if (!$view) return apply(error: en('Unknown page'))
+	$html = static::GET($view['url'])
+	if ($html === null) return apply(error: en('Could not reach %s', (string)$view['url']))
+	return apply(outer: ['#'.static::previewId($app) => static::previewBox($view, static::meta($html, 'https://'.$view['host']))])
 }
 
 <script>
+const pdView = card => {
+	const env = card.querySelector('.pd-env.on')
+	const page = card.querySelector('.pd-page')
+	const lang = card.querySelector('.pd-lang')
+	const parts = [card.dataset.app, env ? env.dataset.env : 0, page ? page.value : -1]
+	if (lang && lang.value) parts.push(lang.value)
+	app.get('product/view/' + parts.join('/'), false)
+}
+
+const pdBroken = img => img.replaceWith(Object.assign(document.createElement('div'), {className: 'pd-img pd-noimg'}))
+
 on('click', '.pd-load', el => app.get('product/load/' + el.dataset.app, false))
 
 on('click', '#pd-all', () => objects('.pd-card[data-empty] .pd-load').forEach(el => app.get('product/load/' + el.dataset.app, false)))
 
-on('change', '.pd-page, .pd-lang', el => {
+on('click', '.pd-env', el => {
 	const card = el.closest('.pd-card')
-	const page = card.querySelector('.pd-page')
-	const lang = card.querySelector('.pd-lang')
-	app.get('product/page/' + card.dataset.app + '/' + page.value + (lang && lang.value ? '/' + lang.value : ''), false)
+	objects('.pd-env', card).forEach(pill => pill.classList.remove('on'))
+	el.classList.add('on')
+	pdView(card)
 })
+
+on('change', '.pd-page, .pd-lang', el => pdView(el.closest('.pd-card')))
+
+// An og:image that no longer resolves leaves the placeholder instead of a broken picture. onExist covers the
+// one that already failed before the listener was bound.
+on('error', 'img.pd-img', el => pdBroken(el))
+onExist('img.pd-img', img => img.complete && !img.naturalWidth && pdBroken(img))
 </script>
 
 <style>
@@ -395,33 +444,36 @@ on('change', '.pd-page, .pd-lang', el => {
 .pd-head {
 	align-items: center
 	display: flex
-	gap: 8px
+	gap: 10px
 	justify-content: space-between
-	padding: 10px 12px
+	padding: 8px 12px
 }
 .pd-name {
 	color: $text
-	font-size: 15px
+	flex: 1
+	font-size: 14px
 	font-weight: 600
+	min-width: 0
 	overflow: hidden
 	text-overflow: ellipsis
 	white-space: nowrap
-}
-.pd-open {
-	color: $muted
-	display: flex
-	flex-shrink: 0
-}
-.pd-open:hover {
-	color: $primary
 }
 .pd-preview {
 	background: $bg
 	border-block: 1px solid $border
 }
+.pd-link {
+	color: inherit
+	display: block
+	text-decoration: none
+}
+.pd-link:hover .pd-title {
+	color: $primary
+}
 .pd-img {
 	aspect-ratio: 1.91 / 1
 	display: block
+	max-height: 190px
 	object-fit: cover
 	width: 100%
 }
@@ -434,19 +486,23 @@ on('change', '.pd-page, .pd-lang', el => {
 .pd-body {
 	display: flex
 	flex-direction: column
-	gap: 3px
-	padding: 10px 12px
+	gap: 2px
+	padding: 8px 12px
 }
 .pd-domain {
 	color: $muted
 	font-size: 10px
 	letter-spacing: .6px
+	line-height: 1.4
 }
 .pd-title {
 	color: $text
 	font-size: 14px
 	font-weight: 600
-	line-height: 1.3
+	line-height: 1.35
+	overflow: hidden
+	text-overflow: ellipsis
+	white-space: nowrap
 }
 .pd-descr {
 	color: $muted
@@ -454,17 +510,47 @@ on('change', '.pd-page, .pd-lang', el => {
 	-webkit-box-orient: vertical
 	-webkit-line-clamp: 2
 	font-size: 12px
-	line-height: 1.45
+	line-height: 1.4
+	min-height: 2.8em
 	overflow: hidden
 }
 .pd-blank .pd-body {
 	align-items: flex-start
 	gap: 8px
 }
+.pd-envs {
+	display: flex
+	gap: 4px
+	overflow-x: auto
+	padding: 8px 12px 0
+	scrollbar-width: none
+}
+.pd-env {
+	align-items: center
+	background: $bg
+	border: 1px solid $border
+	border-radius: 999px
+	color: $muted
+	cursor: pointer
+	display: flex
+	flex-shrink: 0
+	font-size: 10px
+	gap: 4px
+	letter-spacing: .4px
+	padding: 3px 8px
+	text-transform: uppercase
+}
+.pd-env:hover {
+	color: $text
+}
+.pd-env.on {
+	border-color: $primary
+	color: $primary
+}
 .pd-picker {
 	display: flex
 	gap: 6px
-	padding: 8px 12px 0
+	padding: 6px 12px 0
 }
 .pd-pick {
 	align-items: center
@@ -493,9 +579,8 @@ on('change', '.pd-page, .pd-lang', el => {
 .pd-ops {
 	align-items: center
 	display: flex
-	flex-wrap: wrap
+	flex-shrink: 0
 	gap: 10px
-	padding: 10px 12px 0
 }
 .pd-stat {
 	align-items: center
@@ -508,37 +593,6 @@ on('change', '.pd-page, .pd-lang', el => {
 .pd-err {
 	color: $error
 }
-.pd-layers {
-	display: flex
-	flex-direction: column
-	gap: 3px
-	padding: 8px 12px 0
-}
-.pd-layer {
-	align-items: center
-	display: flex
-	font-size: 11px
-	gap: 6px
-}
-.pd-layer-host {
-	color: $muted
-	overflow: hidden
-	text-overflow: ellipsis
-	white-space: nowrap
-}
-.pd-layer-env {
-	background: color-mix(in srgb, $surface 80%, $text)
-	border-radius: 3px
-	color: $muted
-	font-size: 9px
-	letter-spacing: .5px
-	margin-left: auto
-	padding: 1px 4px
-	text-transform: uppercase
-}
-.pd-layer-env.live {
-	color: $primary
-}
 .pd-foot {
 	align-items: center
 	color: $muted
@@ -546,7 +600,7 @@ on('change', '.pd-page, .pd-lang', el => {
 	font-size: 11px
 	gap: 8px
 	margin-top: auto
-	padding: 10px 12px
+	padding: 8px 12px
 }
 .pd-refresh {
 	margin-left: auto

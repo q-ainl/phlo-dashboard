@@ -196,16 +196,20 @@ final class DashboardSmokeTest extends TestCase {
 		$this->assertSame(['/', 'docs'], $r['groups'], 'pages group by first path segment with the root level first');
 		$this->assertSame(['nl'], $r['langs']);
 		// A loaded card shows the preview, both pickers and the sitemap count.
-		$this->assertStringContainsString('<img src="https://phlo.tech/icon.webp"', $r['card'], 'the preview deep links the image instead of storing it');
+		$this->assertStringContainsString('<img src="/product/image/phlo.tech/0/-1"', $r['card'], 'the image is served from our own origin, addressed by environment and page, never by a URL from the request');
 		$this->assertStringContainsString('loading="lazy"', $r['card']);
 		$this->assertStringContainsString('Phlo &amp; Co', $r['card'], 'remote metadata is escaped on output');
 		$this->assertStringContainsString('<option value="1">/docs/views</option>', $r['card']);
 		$this->assertStringContainsString('class="pd-lang"', $r['card']);
 		$this->assertStringContainsString('2 pages', $r['card']);
 		$this->assertStringContainsString('2 hours old', $r['card'], 'the card says how old its preview is instead of refreshing itself');
-		// Other hosts of the same app are layers on this card, classified without asking the host anything.
-		$this->assertStringContainsString('>staging</span>', $r['card'], 'a prod build that is not published reads as staging');
-		$this->assertStringContainsString('>dev</span>', $r['card']);
+		// The preview is a link to the page it shows, opened in a new tab.
+		$this->assertStringContainsString('<a href="https://phlo.tech/" target="_blank" class="pd-link">', $r['card'], 'the whole preview links to the page it shows');
+		// Other hosts of the same app are selectable pills on this card, named after what sets them apart.
+		$this->assertStringContainsString('data-env="0" title="phlo.tech" class="pd-env on"', $r['card'], 'the published host is the selected environment');
+		$this->assertStringContainsString('data-env="1" title="stage.phlo.tech" class="pd-env"', $r['card']);
+		$this->assertStringContainsString('<span>stage</span>', $r['card'], 'a layer is labelled by what distinguishes it from the face');
+		$this->assertStringContainsString('<span>dev</span>', $r['card']);
 		$this->assertStringNotContainsString('<article', substr($r['card'], 1), 'every environment stays inside the one product card');
 		// Without a stored preview the card is an explicit empty state: no picker, no fetch, just a button.
 		$this->assertStringContainsString('data-empty', $r['blank']);
