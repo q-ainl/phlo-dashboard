@@ -92,10 +92,11 @@ static hosts($product){
 }
 
 // What distinguishes a layer from the face: stage.phlo.tech under phlo.tech reads as 'stage'. A host on another
-// domain keeps its full name.
-static envName($host, $face){
-	if ((string)$host === (string)$face) return en('live')
-	return str_ends_with((string)$host, dot.$face) ? substr((string)$host, 0, -strlen((string)$face) - 1) : (string)$host
+// domain has no such prefix to show, so it falls back to what it is; the full name is in the title attribute.
+static envName($h, $face){
+	$host = (string)$h['host']
+	if ($host === (string)$face) return en('live')
+	return str_ends_with($host, dot.$face) ? substr($host, 0, -strlen((string)$face) - 1) : static::envLabel($h)
 }
 
 // Turns the (env, page, lang) a card is showing into an address. Every part is an index into data the fleet or
@@ -250,7 +251,8 @@ static preview($view, $meta){
 	$src = '/product/image/'.rawurlencode((string)$view['app']).slash.(int)$view['env'].slash.(int)$view['i'].(($view['lang'] ?? void) !== void ? slash.rawurlencode((string)$view['lang']) : void)
 	// Rendering never fetches: the image is requested by the browser, and one that no longer resolves is
 	// swapped for the placeholder on error instead of leaving a broken picture in the card.
-	$shot = $image !== void ? tag('img', null, src: $src, alt: void, loading: 'lazy', decoding: 'async', class: 'pd-img') : tag('div', overview::icon('globe', 26), class: 'pd-img pd-noimg')
+	$art = tag('img', null, src: $src, alt: void, loading: 'lazy', decoding: 'async', class: 'pd-blur', aria_hidden: 'true').tag('img', null, src: $src, alt: void, loading: 'lazy', decoding: 'async', class: 'pd-shot')
+	$shot = $image !== void ? tag('div', $art, class: 'pd-img') : tag('div', overview::icon('globe', 26), class: 'pd-img pd-noimg')
 	$domain = (string)(parse_url((string)($meta['url'] ?? void), PHP_URL_HOST) ?: $view['host'])
 	$body = tag('span', esc(strtoupper($domain)), class: 'pd-domain')
 	$body .= tag('h3', esc((string)($meta['title'] ?? void)) ?: en('No title'), class: 'pd-title')
@@ -265,23 +267,25 @@ static previewBox($view, $meta){
 	return tag('div', tag('a', static::preview($view, $meta), href: $url, target: '_blank', class: 'pd-link'), id: static::previewId((string)$view['app']), class: 'pd-preview')
 }
 
-static blank($app){
-	$body = tag('p', en('No preview loaded yet.'), class: 'pd-descr').tag('button', en('Load preview'), type: 'button', data_app: $app, class: 'pd-btn pd-load')
+static blank($app, $host){
+	$body = tag('span', esc(strtoupper((string)$host)), class: 'pd-domain')
+	$body .= tag('p', en('No preview loaded yet.'), class: 'pd-descr')
+	$body .= tag('button', en('Load preview'), type: 'button', data_app: $app, class: 'pd-btn pd-load')
 	$inner = tag('div', overview::icon('eye', 26), class: 'pd-img pd-noimg').tag('div', $body, class: 'pd-body')
 	return tag('div', $inner, id: static::previewId($app), class: 'pd-preview pd-blank')
 }
 
-// One row of environments, always rendered so every card keeps the same height. Picking one previews that host
-// at the same path, which is the only reason to look at a stage copy in the first place.
+// Environments and fleet numbers share one row, always rendered so every card keeps the same height. Picking
+// an environment previews that host at the same path, which is the only reason to look at a stage copy.
 static envs($product, $current = 0){
 	$face = (string)$product['face']['host']
-	$out = void
+	$pills = void
 	foreach (static::hosts($product) AS $n => $host){
 		$dot = tag('span', void, class: 'st-dot '.overview::envState((int)($host['code'] ?? 0)))
-		$label = tag('span', esc(static::envName((string)$host['host'], $face)))
-		$out .= tag('button', $dot.$label, type: 'button', data_env: $n, title: (string)$host['host'], class: 'pd-env'.($n === (int)$current ? ' on' : void))
+		$label = tag('span', esc(static::envName($host, $face)))
+		$pills .= tag('button', $dot.$label, type: 'button', data_env: $n, title: (string)$host['host'], class: 'pd-env'.($n === (int)$current ? ' on' : void))
 	}
-	return tag('div', $out, class: 'pd-envs')
+	return tag('div', tag('div', $pills, class: 'pd-envs').static::stats($product['face']), class: 'pd-bar')
 }
 
 static picker($app, $pages){
@@ -302,27 +306,23 @@ static picker($app, $pages){
 	return tag('div', $picker, class: 'pd-picker')
 }
 
-// Name and fleet numbers share one line: the preview underneath already names the domain.
-static head($product, $meta){
-	$face = $product['face']
+static stats($face){
 	$host = (string)$face['host']
-	$name = trim((string)($meta['home']['site'] ?? void)) ?: (trim((string)($meta['home']['title'] ?? void)) ?: $host)
-	$stats = overview::statusCell((int)($face['code'] ?? 0), (int)($face['ms'] ?? 0))
+	$stats = overview::stateCell(overview::envState((int)($face['code'] ?? 0)), (int)($face['code'] ?? 0) ?: en('down'))
 	if ((int)$face['visitors']) $stats .= tag('a', overview::icon('eye', 12).tag('span', (string)(int)$face['visitors']), href: '/visitors/q='.rawurlencode($host), target: '_blank', class: 'pd-stat')
 	if ((int)$face['errors']) $stats .= tag('a', overview::icon('alert', 12).tag('span', (string)(int)$face['errors']), href: '/errors/'.rawurlencode((string)$face['node']).slash.rawurlencode((string)$face['app']), class: 'pd-stat async pd-err')
 	$stats .= tag('span', overview::icon('server', 12).tag('span', esc((string)$face['nodeLabel'])), class: 'pd-stat')
-	return tag('div', tag('h2', esc($name), class: 'pd-name').tag('div', $stats, class: 'pd-ops'), class: 'pd-head')
+	return tag('div', $stats, class: 'pd-ops')
 }
 
 static card($product, $meta = null){
 	$app = (string)$product['app']
 	$host = (string)$product['face']['host']
-	$body = static::head($product, $meta)
 	if ($meta){
 		$home = (array)$meta['home']
-		$body .= static::previewBox(['app' => $app, 'host' => $host, 'url' => 'https://'.$host.slash, 'env' => 0, 'i' => -1, 'lang' => void], $home)
+		$body = static::previewBox(['app' => $app, 'host' => $host, 'url' => 'https://'.$host.slash, 'env' => 0, 'i' => -1, 'lang' => void], $home)
 	}
-	else $body .= static::blank($app)
+	else $body = static::blank($app, $host)
 	$body .= static::envs($product)
 	$body .= static::picker($app, (array)($meta['pages'] ?? []))
 	if ($meta){
@@ -337,7 +337,6 @@ static card($product, $meta = null){
 
 static view {
 	$products = static::products()
-	if (!$products) return tag('div', tag('p', en('No published sites found in the fleet yet.'), class: 'pd-none'), class: 'pd-wrap')
 	$cards = void
 	$empty = 0
 	foreach ($products AS $slug => $product){
@@ -345,10 +344,13 @@ static view {
 		$meta === null && $empty++
 		$cards .= static::card($product, $meta)
 	}
-	$bar = tag('span', en('%d products', count($products)), class: 'pd-count')
-	if ($empty) $bar .= tag('button', en('Load %d previews', $empty), type: 'button', id: 'pd-all', class: 'pd-btn primary')
-	$bar = tag('div', $bar, class: 'pd-bar')
-	return tag('div', $bar.tag('section', $cards, class: 'pd-grid'), class: 'pd-wrap')
+	$title = tag('h1', overview::icon('globe', 26, 'blue').tag('span', en('Products'), class: 'grad'), class: 'dash-title')
+	$title .= tag('p', en('Every published site of the fleet, as the world sees it shared'), class: 'dash-sub')
+	$tools = tag('div', overview::icon('panel', 16, 'muted').tag('span', en('%d products', count($products))), class: 'dash-update')
+	if ($empty) $tools .= tag('button', overview::icon('refresh', 14).tag('span', en('Load %d previews', $empty)), type: 'button', id: 'pd-all', class: 'pd-btn primary')
+	$head = tag('header', tag('div', $title).tag('div', $tools, class: 'pd-tools'), class: 'dash-head')
+	$body = $products ? tag('section', $cards, class: 'pd-grid') : tag('p', en('No published sites found in the fleet yet.'), class: 'pd-none')
+	return tag('div', $head.$body, class: 'dash')
 }
 
 route both GET products {
@@ -395,7 +397,7 @@ const pdView = card => {
 	app.get('product/view/' + parts.join('/'), false)
 }
 
-const pdBroken = img => img.replaceWith(Object.assign(document.createElement('div'), {className: 'pd-img pd-noimg'}))
+const pdBroken = img => img.closest('.pd-img').replaceWith(Object.assign(document.createElement('div'), {className: 'pd-img pd-noimg'}))
 
 on('click', '.pd-load', el => app.get('product/load/' + el.dataset.app, false))
 
@@ -412,21 +414,15 @@ on('change', '.pd-page, .pd-lang', el => pdView(el.closest('.pd-card')))
 
 // An og:image that no longer resolves leaves the placeholder instead of a broken picture. onExist covers the
 // one that already failed before the listener was bound.
-on('error', 'img.pd-img', el => pdBroken(el))
-onExist('img.pd-img', img => img.complete && !img.naturalWidth && pdBroken(img))
+on('error', 'img.pd-shot', el => pdBroken(el))
+onExist('img.pd-shot', img => img.complete && !img.naturalWidth && pdBroken(img))
 </script>
 
 <style>
-.pd-bar {
+.pd-tools {
 	align-items: center
 	display: flex
-	gap: 10px
-	justify-content: space-between
-	margin-bottom: 12px
-}
-.pd-count {
-	color: $muted
-	font-size: 13px
+	gap: .6rem
 }
 .pd-grid {
 	display: grid
@@ -441,26 +437,9 @@ onExist('img.pd-img', img => img.complete && !img.naturalWidth && pdBroken(img))
 	flex-direction: column
 	overflow: hidden
 }
-.pd-head {
-	align-items: center
-	display: flex
-	gap: 10px
-	justify-content: space-between
-	padding: 8px 12px
-}
-.pd-name {
-	color: $text
-	flex: 1
-	font-size: 14px
-	font-weight: 600
-	min-width: 0
-	overflow: hidden
-	text-overflow: ellipsis
-	white-space: nowrap
-}
 .pd-preview {
 	background: $bg
-	border-block: 1px solid $border
+	border-bottom: 1px solid $border
 }
 .pd-link {
 	color: inherit
@@ -471,10 +450,29 @@ onExist('img.pd-img', img => img.complete && !img.naturalWidth && pdBroken(img))
 	color: $primary
 }
 .pd-img {
-	aspect-ratio: 1.91 / 1
+	aspect-ratio: 1.6 / 1
 	display: block
-	max-height: 190px
+	max-height: 240px
+	overflow: hidden
+	position: relative
+	width: 100%
+}
+// A square og:image would lose half its frame to a 1.91:1 crop, so the artwork is shown whole and the box is
+// filled with a blurred copy of itself instead of with bars.
+.pd-shot {
+	height: 100%
+	object-fit: contain
+	position: relative
+	width: 100%
+}
+.pd-blur {
+	filter: blur(18px) saturate(1.3)
+	height: 100%
+	left: 0
 	object-fit: cover
+	position: absolute
+	top: 0
+	transform: scale(1.15)
 	width: 100%
 }
 .pd-noimg {
@@ -497,9 +495,9 @@ onExist('img.pd-img', img => img.complete && !img.naturalWidth && pdBroken(img))
 }
 .pd-title {
 	color: $text
-	font-size: 14px
+	font-size: 13px
 	font-weight: 600
-	line-height: 1.35
+	line-height: 1.3
 	overflow: hidden
 	text-overflow: ellipsis
 	white-space: nowrap
@@ -518,11 +516,18 @@ onExist('img.pd-img', img => img.complete && !img.naturalWidth && pdBroken(img))
 	align-items: flex-start
 	gap: 8px
 }
+.pd-bar {
+	align-items: center
+	display: flex
+	gap: 8px
+	justify-content: space-between
+	padding: 8px 12px 0
+}
 .pd-envs {
 	display: flex
 	gap: 4px
+	min-width: 0
 	overflow-x: auto
-	padding: 8px 12px 0
 	scrollbar-width: none
 }
 .pd-env {
@@ -535,9 +540,9 @@ onExist('img.pd-img', img => img.complete && !img.naturalWidth && pdBroken(img))
 	display: flex
 	flex-shrink: 0
 	font-size: 10px
-	gap: 4px
-	letter-spacing: .4px
-	padding: 3px 8px
+	gap: 3px
+	letter-spacing: .3px
+	padding: 3px 6px
 	text-transform: uppercase
 }
 .pd-env:hover {
