@@ -73,7 +73,7 @@ static filteredRows($args){
 	return $rows
 }
 
-static records(...$args){
+static records(...$args):array {
 	$rows = static::filteredRows($args)
 	// CMS pagination sends limit as the MySQL "offset,count" string; honour that as well as a plain count + offset arg.
 	if (($limit = (string)($args['limit'] ?? '')) !== ''){
@@ -89,7 +89,7 @@ static records(...$args){
 
 static recordCount(...$args) => count(static::filteredRows($args))
 
-static record(...$args){
+static record(...$args):?static {
 	$id = (string)($args['id'] ?? void)
 	foreach (static::report()['recent'] ?? [] AS $row) if ((string)($row['id'] ?? '') === $id) return static::rowObject($row)
 	return null

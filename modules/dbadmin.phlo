@@ -1,7 +1,7 @@
 @ extends: DB
 @ summary: Database manager for MySQL (per-session login) and SQLite (.db files from data/). Browse, structure and schema management, rows, SQL console, import and export. Admin-only.
 
-prop PDO => dbadmin::connectMysql(static::creds())
+prop PDO:\PDO => dbadmin::connectMysql(static::creds())
 
 static connectMysql($c){
 	$parts = explode(':', trim((string)($c['host'] ?? void)) ?: 'localhost', 2)
