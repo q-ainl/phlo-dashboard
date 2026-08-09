@@ -18,7 +18,13 @@ static verifyIni($user, $pass){
 	$c = static::siteCreds()
 	$u = (string)($c['user'] ?? void)
 	$p = (string)($c['password'] ?? void)
-	return $u !== void && $p !== void && hash_equals($u, (string)$user) && hash_equals($p, (string)$pass)
+	if ($u === void || $p === void) return false
+	// Beide helften worden altijd vergeleken en pas daarna gecombineerd. Met && ertussen
+	// slaat PHP de wachtwoordvergelijking over zodra de naam niet klopt, en dat verschil
+	// in looptijd vertelt een bezoeker of hij een bestaande naam te pakken heeft.
+	$okUser = hash_equals($u, (string)$user)
+	$okPass = hash_equals($p, (string)$pass)
+	return $okUser && $okPass
 }
 
 // Federation (gated on [fleet] master in creds): authenticate a user against the central hub. Signs
