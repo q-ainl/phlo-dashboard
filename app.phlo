@@ -47,14 +47,30 @@ if (phlo_exists('auth')){
 	if (auth::check()) return
 	auth::authed() && auth::user()
 	if (trim((string)%req->path, '/') === '') return auth::home()
-	if (!auth::allows(%req->path)) return main('No access to this page.', 'No access')
+	// A refusal is not a success: the page renders as before, but with the status that says
+	// what happened. Async requests carry no status (apply() always renders 200), so there
+	// the message in the body is the answer.
+	if (!auth::allows(%req->path)) return main('No access to this page.', 'No access', code: 403)
 }
 %cookies->token ??= token(20)
 if (app::route()) return
-if (phlo_exists('auth')){
-	if (%req->method !== 'GET') return apply(error: 'Invalid request')
-	return main('Page not found!')
-}
-return output(['error' => 'not found'], code: 404)
+
+// Nothing answered this request. app::route() is a plain bool: false covers both "no route
+// matched" and "a route matched and declined" (its callback returned false, the way a page
+// says the record it was asked for does not exist). Either way nothing was produced, so the
+// answer is the same and it is a 404. Answering 200 with a page that says "not found" leaves
+// a monitor, a crawler, a healthcheck and a client script unable to tell a missing page from
+// a working one.
+
+// Headless (no auth module): a routing-only node that speaks JSON, never pages.
+if (!phlo_exists('auth')) return output(['error' => 'not found'], code: 404)
+
+// A write from the app itself that lands nowhere: the client expects commands back, not a
+// page swap, so it keeps its form and gets the message as a notice.
+if (%req->async && !in_array(%req->method, ['GET', 'HEAD'], true)) return apply(error: 'Page not found')
+
+// HEAD is a GET without a body and route() treats it as one; only this fallback did not, so
+// every HEAD to an unknown path answered "Invalid request" in JSON with a 200.
+return main('Page not found!', 'Page not found', code: 404)
 
 view head: %CSRF

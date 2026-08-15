@@ -118,6 +118,15 @@ final class DashboardSmokeTest extends TestCase {
 		$this->assertSame('unauthorized', (json_decode($body, true)['error'] ?? null), 'it answers with a structured JSON error, not an HTML page or a crash');
 	}
 
+	public function testUnroutedPathAnswers404():void {
+		// A public prefix without a matching route, so the request reaches the controller fallback
+		// instead of the login gate. It has to say 404: a page that answers 200 with "not found"
+		// is indistinguishable from a working one for a monitor, a crawler or a client script.
+		[$status, $body] = self::http('/api/wa/no-such-endpoint');
+		$this->assertSame(404, $status, 'a path no route answered reports not found');
+		$this->assertStringContainsString('Page not found!', $body, 'and still renders the page rather than a bare status');
+	}
+
 	public function testLoginIsRateLimited():void {
 		// Skip only when apcu is genuinely absent; the throttle uses it and this SQLite smoke test has no MySQL.
 		if (!extension_loaded('apcu')) $this->markTestSkipped('login throttle test needs the apcu extension');
