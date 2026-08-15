@@ -49,7 +49,10 @@ static fedAuth($user, $pass){
 
 static user {
 	$sid = %session->user ?? null
-	%req->authUser ??= !$sid ? false : ((%session->fed ?? null) ? new authuser(id: (string)$sid, name: (string)(%session->name ?? $sid), role: (string)(%session->role ?? 'user'), modules: (array)(%session->modules ?? [])) : (($sid === 'root' || !phlo_exists('user')) ? new authuser(id: (string)$sid, name: (string)(%session->name ?? $sid)) : (user::authUser() ?: false)))
+	// method_exists next to phlo_exists: an app may carry a `user` of its own that is not a
+	// login model at all (a POS staff table, say), and then it has no authUser. Without this
+	// guard every request on a non-root session died on an unknown static.
+	%req->authUser ??= !$sid ? false : ((%session->fed ?? null) ? new authuser(id: (string)$sid, name: (string)(%session->name ?? $sid), role: (string)(%session->role ?? 'user'), modules: (array)(%session->modules ?? [])) : (($sid === 'root' || !phlo_exists('user') || !method_exists('user', 'authUser')) ? new authuser(id: (string)$sid, name: (string)(%session->name ?? $sid)) : (user::authUser() ?: false)))
 	return %req->authUser ?: null
 }
 
@@ -126,7 +129,7 @@ route async POST login {
 	// Throttle brute force before any credential check runs; the message never reveals whether the account exists.
 	// Throttle before any credential check; the guards no-op if a node lacks the rate resource or apcu.
 	if (phlo_exists('rate') && function_exists('apcu_enabled') && apcu_enabled() && !rate::check('dashlogin:'.%req->ip, 10, 300, 'apcu')) return apply(inner: ['#loginError' => tag('span', 'Too many attempts. Try again later.', class: 'login-err')])
-	if (phlo_exists('user')){
+	if (phlo_exists('user') && method_exists('user', 'verify')){
 		try {
 			if ($u = user::verify($email, $pass)){
 				%session->objRegenerateId()
