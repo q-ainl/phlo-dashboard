@@ -52,7 +52,12 @@ if (phlo_exists('auth')){
 	// the message in the body is the answer.
 	if (!auth::allows(%req->path)) return main('No access to this page.', 'No access', code: 403)
 }
-%cookies->token ??= token(20)
+// The cookie the daemon reads at the websocket upgrade. A random value that stays put per
+// browser, unless the app hands one over: a daemon that wants to know who is calling needs
+// a signed token, and a signature has to be rewritten on every request. Undeclared props
+// read as null, so an app that has no opinion changes nothing here.
+if ($wsToken = %app->wsToken) %cookies->token = $wsToken
+else %cookies->token ??= token(20)
 if (app::route()) return
 
 // Nothing answered this request. app::route() is a plain bool: false covers both "no route
