@@ -67,7 +67,7 @@ static errOccTotal($feed){
 static serverCard($node){
 	$feed = fleet::cached($node) ?: ['label' => $node, 'ok' => false]
 	$ok = $feed['ok'] ?? false
-	$sub = $ok ? (($feed['server'] ?? '?').' · build '.($feed['build'] ?? $feed['phlo'] ?? '?')) : 'unreachable'
+	$sub = $ok ? 'build '.($feed['build'] ?? $feed['phlo'] ?? '?') : 'unreachable'
 	$head = static::nodeHead($feed, $node, 18, $sub, 'Phlo '.($feed['phlo'] ?? '?'))
 	if (!$ok) return tag('a', tag('div', $head, class: 'kpi-card off'), href: '/node/'.$node, class: 'kpi-link async')
 	$m = (object)($feed['metrics'] ?? [])
