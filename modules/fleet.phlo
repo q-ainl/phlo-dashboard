@@ -54,8 +54,11 @@ static webUser => (string)(%creds->node?->webuser ?? 'frankenphp')
 // Shell command that restarts the local realtime websocket server (pm2). Configurable per node.
 static wsRestart => (string)(%creds->whatsapp?->restart ?? 'HOME=/var/lib/frankenphp /usr/local/bin/pm2 restart websocket 2>&1')
 
-// Shell command that brings this node's Phlo stack up to date: phlo-update.sh through sudo. Configurable per node.
-static updateCommand => (string)(%creds->update?->command ?? 'sudo -n /srv/control/bin/phlo-update.sh 2>&1')
+// Shell command that brings this node's Phlo stack up to date: phlo-update.sh through sudo, or a command of its own
+// in creds [update]. A node offers the action only when one of the two is there, so no button can only fail.
+static updateScript => '/srv/control/bin/phlo-update.sh'
+static updateCommand => (string)(%creds->update?->command ?? 'sudo -n '.static::updateScript().' 2>&1')
+static canUpdate => isset(%creds->update?->command) || is_file(static::updateScript())
 
 static env($block) => static::envFrom(static::rootFromBlock($block))
 
@@ -385,6 +388,7 @@ static collect {
 		'errors' => $errors,
 		'whatsapp' => static::whatsapp(),
 		'backups' => static::backups(),
+		'update' => static::canUpdate(),
 	]
 }
 
