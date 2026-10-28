@@ -222,7 +222,7 @@ static nodeDetail($node){
 	$errTotal = static::errOccTotal($feed)
 	$vis = (int)array_sum($feed['visitors'] ?? [])
 	$errStat = $errTotal ? tag('a', static::icon('alert', 14).tag('span', number_format($errTotal).' errors'), href: '/errors/'.$node, class: 'kpi-stat bad link async') : tag('span', static::icon('check', 14, 'emerald').tag('span', 'no errors'), class: 'kpi-stat good')
-	$stats = tag('div', static::kpiStat('server', count($feed['apps'] ?? []).' hosts').static::kpiStat('clock', age_human($m->uptime_sec ?? 0)).static::kpiStat('users', number_format($vis).' visitors').$errStat, class: 'kpi-stats nd-stats')
+	$stats = tag('div', static::kpiStat('server', count($feed['apps'] ?? []).' hosts').static::kpiStat('clock', age_human($m->uptime_sec ?? 0)).static::kpiStat('users', number_format($vis).' visitors').$errStat.(in_array($feed['mode'] ?? '', ['self', 'pull']) ? tag('button', static::icon('refresh', 14).tag('span', 'Update Phlo'), type: 'button', data_post: 'manage/'.$node.'/update', data_confirm: 'Update the Phlo stack on '.($feed['label'] ?? $node).'?', class: 'mg-btn') : void), class: 'kpi-stats nd-stats')
 	$metricsCard = tag('section', tag('div', $head.$stats, class: 'nd-top').static::metricBars($m), class: 'sw-card nd-card')
 	return tag('div', $back.$metricsCard.static::nodeWaPanel($node, $feed).static::nodeHostsTable($node, $feed), class: 'dash')
 }

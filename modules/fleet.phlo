@@ -54,6 +54,9 @@ static webUser => (string)(%creds->node?->webuser ?? 'frankenphp')
 // Shell command that restarts the local realtime websocket server (pm2). Configurable per node.
 static wsRestart => (string)(%creds->whatsapp?->restart ?? 'HOME=/var/lib/frankenphp /usr/local/bin/pm2 restart websocket 2>&1')
 
+// Shell command that brings this node's Phlo stack up to date: phlo-update.sh through sudo. Configurable per node.
+static updateCommand => (string)(%creds->update?->command ?? 'sudo -n /srv/control/bin/phlo-update.sh 2>&1')
+
 static env($block) => static::envFrom(static::rootFromBlock($block))
 
 static envFrom($root) => $root && preg_match('/\bbuild\s*:\s*true\b/', (string)@file_get_contents($root.'/www/app.php')) ? 'dev' : 'prod'
@@ -661,7 +664,7 @@ static nodes {
 	return $out
 }
 
-static actions => ['errors-reset', 'rebuild', 'ws-restart']
+static actions => ['errors-reset', 'rebuild', 'ws-restart', 'update']
 
 static runAction($command, $app = void){
 	$appsBase = dirname(static::base())
@@ -684,6 +687,7 @@ static runAction($command, $app = void){
 		@shell_exec(static::wsRestart())
 		return 'websocket restarted'
 	}
+	if ($command === 'update') return trim((string)@shell_exec(static::updateCommand())) ?: 'the update script gave no answer'
 	return 'unknown action'
 }
 
@@ -702,7 +706,7 @@ static manage($node, $command, $app = void){
 	if ($url === void || $secret === void) return ['ok' => false, 'msg' => 'no creds']
 	$headers = static::signHeaders($secret, (string)$command.'.'.(string)$app)
 	try {
-		$res = json_decode((string)HTTP($url.'/api/manage', $headers, true, ['command' => $command, 'app' => (string)$app]), true)
+		$res = json_decode((string)HTTP($url.'/api/manage', $headers, true, ['command' => $command, 'app' => (string)$app], timeout: $command === 'update' ? 300 : 15), true)
 		return is_array($res) ? $res : ['ok' => false, 'msg' => 'no response']
 	}
 	catch (\Throwable $e){
