@@ -1,0 +1,149 @@
+@ summary: Read-only JSON API over the polled fleet cache, authenticated with a bearer token. Silent until a node configures a client.
+@ requires: security/rate
+
+// Clients live in creds.ini, one block per consumer, shaped like the [fleet] peers next to them:
+//
+//   [api]
+//   portal[token] = <secret>
+//   portal[nodes] = local, jordi       ; omit or * for every node this dashboard polls
+//   portal[label] = Desktop portal
+//
+// No section, no clients, no access: every route answers 401 until a node opts in, so upgrading to a build
+// that carries this module does not open anything by itself.
+static clients => %creds->api ?? null
+
+// Authorization is dropped before it reaches PHP on some setups, and a proxy that keeps it may hand it over
+// under the redirect-prefixed name instead; X-Api-Token is the header that survives both.
+static bearer {
+	$auth = trim((string)($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? void))
+	if (preg_match('/^Bearer\s+(\S+)$/i', $auth, $m)) return $m[1]
+	return trim((string)($_SERVER['HTTP_X_API_TOKEN'] ?? void))
+}
+
+// The matching client name, or false. Every configured token is compared even after one matches, and each
+// comparison is constant time, so neither the answer nor how long it took narrows down a wrong token.
+static client {
+	$token = static::bearer()
+	if ($token === void) return false
+	$found = false
+	foreach ((static::clients() ?? []) AS $name => $c){
+		$secret = (string)($c->token ?? void)
+		if ($secret === void) continue
+		if (hash_equals($secret, $token)) $found = $name
+	}
+	return $found
+}
+
+// Which nodes a client may read, intersected with the nodes this dashboard actually polls, so a name that
+// disappears from [fleet] cannot linger here as access to something else that later takes its place.
+static allowed($name){
+	$cfg = trim((string)(static::clients()?->$name?->nodes ?? '*'))
+	$nodes = fleet::nodes()
+	if ($cfg === void || $cfg === '*') return $nodes
+	return array_values(array_intersect($nodes, loop(explode(',', $cfg), fn($s) => trim($s))))
+}
+
+// No-op where the login throttle is also a no-op (a node without apcu), for the same reason: a limit that
+// cannot count is better skipped than faked.
+static within($name) => !function_exists('apcu_enabled') || !apcu_enabled() || rate::check('fleetapi:'.$name, 120, 60, 'apcu')
+
+// One line per request, refusals included. A read leaves no trace in the model audit, which logs mutations
+// and keys them to a session user; a token nobody can hold to account is the thing this file must not be.
+static note($name, $status){
+	$file = data.'api.log'
+	$fresh = !is_file($file)
+	@file_put_contents($file, implode(space, [date('c'), $name ?: '-', (string)%req->method, '/'.trim((string)%req->path, '/'), (string)$status, (string)%req->ip]).lf, FILE_APPEND)
+	// It names clients, paths and addresses, so it is created private rather than left to the umask.
+	$fresh && @chmod($file, 0600)
+}
+
+// Drops the three detail lists that carry a node: the backup run's file names (the largest single thing in a
+// snapshot by far), and the error entries behind each app. Every count and summary above them survives, so a
+// phone can show the same numbers and only pay for the detail when someone opens it.
+static slim($data){
+	unset($data['backups']['files'], $data['backups']['gone'])
+	foreach (array_keys((array)($data['errors'] ?? [])) AS $app) unset($data['errors'][$app]['entries'])
+	return $data
+}
+
+// One gate for every route in here. It answers with the client name, or renders the refusal itself and
+// answers false, so a route only has to decide what to do when it is let through. output() writes the
+// response as it is called, which is why the refusal does not travel back as a value.
+static gate {
+	%res->header('Cache-Control', 'no-store')
+	$name = static::client()
+	if (!$name){
+		static::note('-', 401)
+		output(['error' => 'unauthorized'], code: 401)
+		return false
+	}
+	if (!static::within($name)){
+		static::note($name, 429)
+		output(['error' => 'rate limited'], code: 429)
+		return false
+	}
+	return $name
+}
+
+// The bundle: whatever the poller last wrote per node, which is the same picture the dashboard itself draws.
+// Reading the cache rather than collecting live keeps a slow or dead node out of this request, exactly as it
+// stays out of the pages.
+static answer($node = null){
+	$name = static::gate()
+	if (!$name) return
+	$allowed = static::allowed($name)
+	if ($node !== null && !in_array($node, $allowed, true)){
+		static::note($name, 404)
+		return output(['error' => 'unknown node'], code: 404)
+	}
+	$slim = (string)(%req->query['slim'] ?? void) === '1'
+	$out = []
+	foreach ($node !== null ? [$node] : $allowed AS $n){
+		$data = fleet::cached($n)
+		if (!$data) continue
+		$out[$n] = $slim ? static::slim($data) : $data
+	}
+	static::note($name, 200)
+	return output(['time' => time(), 'nodes' => $out])
+}
+
+route GET api fleet {
+	%security->api
+	return static::answer()
+}
+
+route GET api fleet $node {
+	%security->api
+	return static::answer($node)
+}
+
+// ---------- the commit log ----------
+
+// The same token, the same client scoping, over the table the code sync fills. Rows for a feed, totals
+// for a chart: a portal that wants a graph should not have to pull the whole log to draw one.
+//
+// Scoping is by node, and node on a commit means where we first saw it. After deduplication a commit
+// belongs to a repository rather than to a machine, so a client restricted to a subset of nodes can
+// miss a commit that happened to reach us through a node it may not read. For a client on * , which is
+// what a portal wanting the whole picture is, the distinction does not arise.
+route GET api commits {
+	%security->api
+	$name = static::gate()
+	if (!$name) return
+	static::note($name, 200)
+	return output([
+		'time' => time(),
+		'commits' => commit::feed(static::allowed($name), (int)(%req->query['since'] ?? 0), (int)(%req->query['until'] ?? 0), (int)(%req->query['limit'] ?? 200)),
+	])
+}
+
+route GET api commits stats {
+	%security->api
+	$name = static::gate()
+	if (!$name) return
+	$allowed = static::allowed($name)
+	$since = (int)(%req->query['since'] ?? 0)
+	$until = (int)(%req->query['until'] ?? 0)
+	static::note($name, 200)
+	return output(['time' => time(), 'days' => commit::perDay($allowed, $since, $until), 'repos' => commit::perRepo($allowed, $since, $until)])
+}

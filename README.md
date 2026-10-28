@@ -49,8 +49,9 @@ Then set up the node local config:
 1. Copy `www/app.php.example` to `www/app.php` and set your host and paths. It keeps `build: true` (development): the app compiles on demand and `build::run` is available.
 2. Copy `data/app.example.json` to `data/app.json`.
 3. Create `data/creds.ini` (MySQL connection, fleet peers, alert and notify endpoints) and, for HTTP basic login, `data/auth.ini`.
-4. Build the app: `php www/app.php build::run`
-5. Serve with FrankenPHP.
+4. If `data/app.json` lists `commit`, create its table: `mysql <database> < modules/commit.sql`.
+5. Build the app: `php www/app.php build::run`
+6. Serve with FrankenPHP.
 
 For production, deploy the compiled output and a second entrypoint with `build: false` (the `build::` tools are development-only and are absent under `build: false`).
 

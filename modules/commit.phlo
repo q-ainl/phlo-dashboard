@@ -1,0 +1,276 @@
+@ extends: model
+@ requires: HTTP
+@ summary: Fleet wide commit log. Each node reads the repositories it declares and hands over what changed since a watermark; the master keeps them keyed by hash, so the same commit reported by six nodes is one row.
+
+// A commit is not a measurement, it is a fact that never changes again. That is the whole reason this
+// lives beside the fleet cache instead of inside it: the cache answers "how is this node right now" and
+// is overwritten every cycle, while this table only ever grows. Two mechanisms keep it honest and cheap,
+// and they are not the same mechanism:
+//
+//   hash is unique       -> re-sending a commit costs one ignored insert. Overlap the window, re-run a
+//                           full sweep, let every node report the shared engine history: all harmless.
+//   since is a watermark -> the master asks each node only for what it does not have yet.
+//
+// Idempotence buys correctness, the watermark buys volume. Without the first the second is a brittle
+// cursor that loses a commit at every gap; without the second the first is correct but ships everything
+// forever.
+
+view: $this->subject
+
+static table = 'commits'
+static order = 'committed DESC'
+
+// A log, written by the sync and read by the pages and the API. It is not a CMS model: there is nothing
+// here a person should be creating or editing by hand, and a wrong hash is not a validation error but a
+// row that will never match the repository it came from.
+static canView => false
+static canCreate => false
+static canChange($r = null) => false
+static canDelete($r = null) => false
+
+// ---------- what this node offers ----------
+
+// Which directories a node opens up, declared per node in creds.ini. No section means no repositories
+// and an empty answer, so a node that upgrades to a build carrying this module keeps sending exactly
+// what it sent before until someone decides otherwise. Same rule as [discovery] sources next to it.
+//
+//   [code]
+//   roots   = /srv, /srv/clients
+//   depth   = 2
+//   exclude = reference, archive
+//
+// Declared roots rather than the vhost list, because the two do not overlap where it matters: the
+// repositories that carry the work are not published sites, and the published sites are mostly flat
+// deploys with no history at all.
+static roots {
+	$out = []
+	foreach (explode(comma, (string)(%creds->code?->roots ?? void)) AS $dir){
+		$dir = rtrim(trim($dir), slash)
+		if ($dir !== void && is_dir($dir)) $out[] = $dir
+	}
+	return $out
+}
+
+static depth => max(1, min(6, (int)(%creds->code?->depth ?? 2)))
+
+// Directory names never descended into. vendor and node_modules hold other people's history; backups
+// holds our own, already counted where it still lives.
+static excluded => array_values(array_filter(array_merge(['vendor', 'node_modules', 'backups'], loop(explode(comma, (string)(%creds->code?->exclude ?? void)), fn($s) => trim($s)))))
+
+// Every repository under the declared roots. It keeps walking inside a repository it already found,
+// because a repository may contain others: the demos under phlo.tech are their own repositories inside
+// one. The depth limit is what bounds the walk, including through a symlinked directory.
+static repos {
+	$out = []
+	foreach (static::roots() AS $root) static::walk($root, static::depth(), static::excluded(), $out)
+	return array_values(array_unique($out))
+}
+
+static walk($dir, $depth, $excluded, &$out){
+	if (file_exists($dir.'/.git')) $out[] = $dir
+	if ($depth < 1) return
+	foreach ((glob($dir.'/*', GLOB_ONLYDIR) ?: []) AS $sub){
+		if (in_array(basename($sub), $excluded, true)) continue
+		static::walk($sub, $depth - 1, $excluded, $out)
+	}
+}
+
+// safe.directory names the one repository being read rather than trusting every repository on the
+// machine: the checkouts belong to whoever deploys them and the sync runs as the web user, so git
+// refuses a repository it does not own until the path is named. timeout, because shell_exec has none of
+// its own and one stuck git (a lock, a slow mount) would hold up every repository behind it.
+static git($root, $args) => trim((string)@shell_exec('timeout 20 git -c safe.directory='.escapeshellarg((string)$root).' -C '.escapeshellarg((string)$root).' '.$args.' 2>/dev/null'))
+
+// What makes two checkouts the same repository. The engine sits on six nodes at once, so without a
+// shared name the same history would read as six repositories. The hash is unique either way, so the
+// counts are right regardless; this is about the label agreeing with itself.
+//
+// A host beginning with github, which covers the ssh aliases in ~/.ssh/config, folds onto github.com. A
+// checkout with no remote is only ever itself, so it is keyed by the machine that holds it.
+static repoName($host, $root){
+	$url = static::git($root, 'config --get remote.origin.url')
+	if ($url === void) return $host.colon.$root
+	$url = rtrim(preg_replace(['#^[a-z0-9._+-]+@([^:/]+):#i', '#^[a-z][a-z0-9+.-]*://(?:[^@/]+@)?#i'], ['$1/', void], $url), slash)
+	if (str_ends_with(strtolower($url), '.git')) $url = substr($url, 0, -4)
+	return preg_replace('#^github[a-z0-9.-]*/#i', 'github.com/', $url)
+}
+
+// One record per commit, fields inside it separated by the two bytes that cannot occur in any of them.
+// The separators go in as chr() rather than git's own escapes, because the compiler reads a percent
+// followed by a name in a string as a resource reference.
+static logFormat => chr(30).'%H'.chr(31).'%ct'.chr(31).'%an'.chr(31).'%ae'.chr(31).'%s'
+
+// Commits since a timestamp, across every ref rather than the checked out branch alone: work on a
+// branch is still work, and on a clone the refs from origin cost nothing because they are already
+// deduplicated away. shortstat turns a commit count into something worth reading, since counting
+// commits alone quietly rewards splitting them. A merge carries no shortstat and lands as zeroes,
+// which is what it is.
+static log($root, $since = 0){
+	$args = 'log --all --format='.escapeshellarg(static::logFormat()).' --shortstat'
+	if ($since > 0) $args .= ' --since='.escapeshellarg('@'.(int)$since)
+	$out = []
+	foreach (explode(chr(30), static::git($root, $args)) AS $record){
+		$lines = explode(lf, trim($record, lf))
+		$p = explode(chr(31), (string)array_shift($lines))
+		if (count($p) !== 5 || !preg_match('/^[0-9a-f]{40}$/', $p[0])) continue
+		$stat = implode(space, $lines)
+		$out[] = [
+			'hash' => $p[0],
+			'committed' => (int)$p[1],
+			'author_name' => mb_substr($p[2], 0, 80),
+			'author_email' => mb_substr($p[3], 0, 120),
+			'subject' => mb_substr($p[4], 0, 250),
+			'files' => (int)(regex('/(\d+) files? changed/', $stat)[1] ?? 0),
+			'insertions' => (int)(regex('/(\d+) insertions?\(/', $stat)[1] ?? 0),
+			'deletions' => (int)(regex('/(\d+) deletions?\(/', $stat)[1] ?? 0),
+		]
+	}
+	return $out
+}
+
+// What this node has to offer since a timestamp. Nothing configured is not an error, it is an empty
+// list. The machine name only ever ends up in the answer as the fallback key for a checkout without a
+// remote; which node this came from is decided by the master, which is the side that knows the name.
+static harvest($since = 0){
+	$host = gethostname()
+	$out = []
+	foreach (static::repos() AS $root){
+		$repo = static::repoName($host, $root)
+		foreach (static::log($root, $since) AS $c) $out[] = $c + ['repo' => $repo, 'path' => mb_substr($root, 0, 250)]
+	}
+	return $out
+}
+
+// ---------- what the master keeps ----------
+
+// Idempotent by construction: hash is unique and the insert ignores a row already there, which is what
+// makes an overlapping window, a repeated full sweep and six nodes reporting one history all free. The
+// insert answers with the new id, or nothing when it was ignored, so the count is exact rather than a
+// second query's guess.
+static ingest($node, $rows){
+	$now = time()
+	$added = 0
+	foreach ((array)$rows AS $row){
+		$hash = (string)($row['hash'] ?? void)
+		$committed = (int)($row['committed'] ?? 0)
+		if (!preg_match('/^[0-9a-f]{40}$/', $hash) || $committed < 1) continue
+		$added += (int)(bool)commit::createRecord (
+			ignore: true,
+			hash: $hash,
+			repo: mb_substr((string)($row['repo'] ?? void), 0, 160),
+			node: mb_substr((string)$node, 0, 32),
+			path: mb_substr((string)($row['path'] ?? void), 0, 250),
+			author_name: mb_substr((string)($row['author_name'] ?? void), 0, 80),
+			author_email: mb_substr((string)($row['author_email'] ?? void), 0, 120),
+			subject: mb_substr((string)($row['subject'] ?? void), 0, 250),
+			files: max(0, (int)($row['files'] ?? 0)),
+			insertions: max(0, (int)($row['insertions'] ?? 0)),
+			deletions: max(0, (int)($row['deletions'] ?? 0)),
+			committed: $committed,
+			seen: $now,
+		)
+	}
+	return $added
+}
+
+// What the master already holds from this node, minus a day. The overlap is deliberate: a rebase, a
+// clock running behind and a repository fetched long after it was written all produce commits older
+// than the newest one we hold, and asking for them again costs one ignored insert each.
+static watermark($node){
+	$max = (int)commit::item(columns: 'MAX(committed)', node: $node)
+	return $max > 0 ? max(0, $max - 86400) : 0
+}
+
+// One cycle: this node in process, then every peer over its own endpoint, each with its own watermark.
+// A peer that is unreachable or has nothing configured contributes nothing and does not hold up the
+// rest, exactly as it stays out of the fleet cache.
+//
+// full skips every watermark and asks for the whole history. It is the backstop for the one thing a
+// watermark is blind to: a repository that arrives on a node carrying commits older than anything we
+// already have from it. Because ingest is idempotent it may run as often as it likes; on the busiest
+// node in this fleet a full sweep is a matter of seconds.
+static sync($full = false){
+	$out = ['local' => commit::ingest('local', commit::harvest($full ? 0 : commit::watermark('local')))]
+	foreach ((fleet::peers() ?? []) AS $name => $cfg){
+		if ((string)($cfg->upstream ?? void) === '1') continue
+		$url = trim((string)($cfg->url ?? void))
+		$secret = (string)($cfg->secret ?? void)
+		if ($url === void || $secret === void) continue
+		$since = $full ? 0 : commit::watermark($name)
+		try {
+			$answer = json_decode((string)HTTP(rtrim($url, slash).'/api/code?since='.$since, fleet::signHeaders($secret), cookies: false, timeout: 120), true)
+		}
+		catch (\Throwable $e){
+			$answer = null
+		}
+		$out[$name] = commit::ingest($name, $answer['commits'] ?? [])
+	}
+	return $out
+}
+
+// The weekly full sweep, so the cheap path stays cheap and the correct path still runs.
+static resync => commit::sync(true)
+
+// ---------- reading it back ----------
+
+// Rows as arrays rather than records: this is a log to be counted and grouped, not a set of objects
+// with relations to walk.
+static rows(...$args) => commit::recordsLoad($args, 'fetchAll', [\PDO::FETCH_ASSOC])
+
+// Everything that reaches SQL unbound here is either an integer cast or a name this side wrote itself
+// (the column lists, and node names checked against the fleet). Values that come from a caller go in
+// as bound arguments.
+static window($since, $until){
+	$where = []
+	if ((int)$since > 0) $where[] = 'committed >= '.(int)$since
+	if ((int)$until > 0) $where[] = 'committed <= '.(int)$until
+	return implode(' AND ', $where)
+}
+
+static nodeFilter($nodes){
+	$clean = array_values(array_intersect(fleet::nodes(), (array)$nodes))
+	return $clean ? 'node IN ('.implode(comma, loop($clean, fn($n) => "'".$n."'")).')' : '1=0'
+}
+
+static both($a, $b) => $a && $b ? $a.' AND '.$b : ($a ?: $b)
+
+// The log itself, newest first.
+static feed($nodes, $since = 0, $until = 0, $limit = 200){
+	$where = static::both(static::nodeFilter($nodes), static::window($since, $until))
+	return commit::rows(where: $where, limit: (string)max(1, min(2000, (int)$limit)))
+}
+
+// Per author per day, which is the shape a chart wants. A portal drawing a graph should not have to
+// pull twelve thousand rows to do it.
+static perDay($nodes, $since = 0, $until = 0){
+	$where = static::both(static::nodeFilter($nodes), static::window($since, $until))
+	return commit::rows (
+		columns: 'DATE(FROM_UNIXTIME(committed)) AS day, author_name, author_email, COUNT(*) AS commits, SUM(insertions) AS insertions, SUM(deletions) AS deletions',
+		where: $where,
+		group: 'day, author_email, author_name',
+		order: 'day DESC',
+	)
+}
+
+// Per repository: how much, by whom, and when it was last touched.
+static perRepo($nodes, $since = 0, $until = 0){
+	$where = static::both(static::nodeFilter($nodes), static::window($since, $until))
+	return commit::rows (
+		columns: 'repo, COUNT(*) AS commits, COUNT(DISTINCT author_email) AS authors, SUM(insertions) AS insertions, SUM(deletions) AS deletions, MAX(committed) AS last',
+		where: $where,
+		group: 'repo',
+		order: 'commits DESC',
+	)
+}
+
+// ---------- the node endpoint ----------
+
+// Peer authenticated exactly like /api/feed, because it is the same trust: a node hands its history to
+// the master that already reads its errors and its visitors. Read only, and silent on a node that
+// declares no roots.
+route GET api code {
+	%security->api
+	if (!fleet::authPeer()) return output(['error' => 'unauthorized'], code: 401)
+	$since = max(0, (int)(%req->query['since'] ?? 0))
+	return output(['host' => gethostname(), 'since' => $since, 'time' => time(), 'commits' => commit::harvest($since)])
+}

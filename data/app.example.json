@@ -87,6 +87,8 @@
         "authuser",
         "auth",
         "fleet",
+        "fleetapi",
+        "commit",
         "wa",
         "domain",
         "visitor",

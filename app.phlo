@@ -6,9 +6,20 @@ prop theme => %session->theme ?? 'ionstorm'
 prop trans => %session->trans ?? 'ripple'
 prop version = '1.0'
 prop %AI.model = 'gpt-4o-mini'
-prop publicPaths = ['api/feed', 'api/visitors', 'api/auth', 'api/manage', 'api/notify', 'api/wa/']
+prop publicPaths = ['api/feed', 'api/visitors', 'api/auth', 'api/manage', 'api/notify', 'api/wa/', 'api/fleet/', 'api/code', 'api/commits/']
 prop logout = '/logout'
-prop tasks => arr(poll: arr(do: 'fleet::poll', every: '2 minutes'))
+prop tasks {
+	$tasks = ['poll' => arr(do: 'fleet::poll', every: '2 minutes')]
+	// Commits are history, not a live reading: a quarter of an hour late is nothing, and a git sweep has
+	// no business holding up the two minute fleet cycle. The weekly full sweep is the backstop for the one
+	// thing a watermark cannot see, a repository arriving with commits older than anything we hold.
+	// A build without the commit module, such as a customer dashboard, has no commits to sweep.
+	if (phlo_exists('commit')){
+		$tasks['code'] = arr(do: 'commit::sync', every: '15 minutes')
+		$tasks['resync'] = arr(do: 'commit::resync', weekly: 'sunday 04:20')
+	}
+	return $tasks
+}
 
 prop models => array_values(array_filter(['visitor', 'domain', 'user', 'subscription'], fn($m) => phlo_exists($m)))
 prop menu {
