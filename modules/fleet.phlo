@@ -340,32 +340,34 @@ static reports {
 	return $out
 }
 
-// The database behind a report, found the way reports() finds it: the first sibling app whose creds.ini names it.
-static reportDb(string $database):?array {
+// The databases behind a report, found the way reports() finds them: every sibling app whose
+// creds.ini names it, because the apps share a database with users of different rights.
+static reportDbs(string $database):array {
+	$out = []
 	foreach (glob(dirname(static::base()).'/*/data/creds.ini') ?: [] AS $file){
 		$ini = @parse_ini_file($file, true, INI_SCANNER_RAW)
 		$db = is_array($ini) ? ($ini['mysql'] ?? null) : null
-		if (is_array($db) && (string)($db['database'] ?? void) === $database && !empty($db['host'])) return $db
+		if (is_array($db) && (string)($db['database'] ?? void) === $database && !empty($db['host'])) $out[] = $db
 	}
-	return null
+	return $out
 }
 
 // The screenshot of one report: type and bytes, from the image table next to feedback, or null.
 static reportImage(string $database, int $id):?array {
-	$db = static::reportDb($database)
-	if (!$db) return null
-	try {
-		$pdo = new \PDO('mysql:host='.$db['host'].';dbname='.$db['database'], (string)($db['user'] ?? ''), (string)($db['password'] ?? ''), [\PDO::ATTR_TIMEOUT => 3, \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION])
-		foreach (['feedback_image', 'feedback_images'] AS $table){
-			if (!$pdo->query("SHOW TABLES LIKE '$table'")->fetchColumn()) continue
-			$st = $pdo->prepare('SELECT type, data FROM '.$table.' WHERE feedback = ?')
-			$st->execute([$id])
-			$row = $st->fetch(\PDO::FETCH_ASSOC)
-			return $row ? ['type' => (string)($row['type'] ?: 'image/webp'), 'data' => (string)$row['data']] : null
+	foreach (static::reportDbs($database) AS $db){
+		try {
+			$pdo = new \PDO('mysql:host='.$db['host'].';dbname='.$db['database'], (string)($db['user'] ?? ''), (string)($db['password'] ?? ''), [\PDO::ATTR_TIMEOUT => 3, \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION])
+			foreach (['feedback_image', 'feedback_images'] AS $table){
+				if (!$pdo->query("SHOW TABLES LIKE '$table'")->fetchColumn()) continue
+				$st = $pdo->prepare('SELECT type, data FROM '.$table.' WHERE feedback = ?')
+				$st->execute([$id])
+				$row = $st->fetch(\PDO::FETCH_ASSOC)
+				if ($row) return ['type' => (string)($row['type'] ?: 'image/webp'), 'data' => (string)$row['data']]
+			}
 		}
-	}
-	catch (\Throwable $e){
-		return null
+		catch (\Throwable $e){
+			continue
+		}
 	}
 	return null
 }
