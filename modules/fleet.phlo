@@ -293,19 +293,30 @@ static reportsClosed {
 	return $list ?: ['opgelost', 'resolved', 'closed', 'done']
 }
 
-// The hosts a sibling app directory is served on, read off the Caddy sites the way the app list is.
+// The hosts a sibling app directory is served on, read off the Caddy sites the way the app list is:
+// a block names its hosts, and its root, plain or through a snippet, names the directory.
 static dirHosts(string $dir):array {
 	$out = []
-	$prefix = dirname(static::base()).slash.$dir.slash
+	$want = dirname(static::base()).slash.$dir
 	foreach (glob(static::base().'/sites/*.caddy') ?: [] AS $file){
+		$blocks = []
 		$hosts = null
+		$buf = ''
 		foreach (explode(lf, (string)@file_get_contents($file)) AS $line){
-			if (preg_match('/^([a-z0-9*][^{(\n]*?)\s*\{/', $line, $m)) $hosts = $m[1]
-			elseif ($hosts !== null && preg_match('/^\s*root\s+\*\s+(\S+)/', $line, $m) && str_starts_with(rtrim($m[1], slash).slash, $prefix)){
-				foreach (explode(',', $hosts) AS $host){
-					$host = trim($host)
-					if ($host !== void && str_contains($host, '.') && !str_contains($host, '*')) $out[] = $host
-				}
+			if (preg_match('/^([a-z0-9*][^{(\n]*?)\s*\{/', $line, $m)){
+				if ($hosts !== null) $blocks[] = ['hosts' => $hosts, 'block' => $buf]
+				$hosts = trim($m[1])
+				$buf = $line.lf
+			}
+			elseif ($hosts !== null) $buf .= $line.lf
+		}
+		if ($hosts !== null) $blocks[] = ['hosts' => $hosts, 'block' => $buf]
+		foreach ($blocks AS $b){
+			$root = rtrim((string)static::rootFromBlock($b['block']), slash)
+			if ($root !== $want && !str_starts_with($root, $want.slash)) continue
+			foreach (explode(',', $b['hosts']) AS $host){
+				$host = trim($host)
+				if ($host !== void && str_contains($host, '.') && !str_contains($host, '*')) $out[] = $host
 			}
 		}
 	}
