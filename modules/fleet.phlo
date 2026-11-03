@@ -293,11 +293,11 @@ static reportsClosed {
 	return $list ?: ['opgelost', 'resolved', 'closed', 'done']
 }
 
-// The hosts a sibling app directory is served on, read off the Caddy sites the way the app list is:
+// The hosts an app directory is served on, read off the Caddy sites the way the app list is:
 // a block names its hosts, and its root, plain or through a snippet, names the directory.
-static dirHosts(string $dir):array {
+static dirHosts(string $path):array {
 	$out = []
-	$want = dirname(static::base()).slash.$dir
+	$want = rtrim($path, slash)
 	foreach (glob(static::base().'/sites/*.caddy') ?: [] AS $file){
 		$blocks = []
 		$hosts = null
@@ -332,8 +332,11 @@ static reports {
 		$ini = @parse_ini_file($file, true, INI_SCANNER_RAW)
 		$db = is_array($ini) ? ($ini['mysql'] ?? null) : null
 		if (!is_array($db) || empty($db['host']) || empty($db['database'])) continue
-		$byDb[$db['host'].'/'.$db['database']][basename(dirname(dirname($file)))] = $db
+		$byDb[$db['host'].'/'.$db['database']][dirname(dirname($file))] = $db
 	}
+	// This dashboard may be the back office of those apps, on the same database.
+	$own = static::localCreds()['mysql'] ?? null
+	if (is_array($own) && !empty($own['host']) && !empty($own['database'])) $byDb[$own['host'].'/'.$own['database']][static::base().'/dashboard'] = $own
 	foreach ($byDb AS $key => $dirs){
 		// Apps share a database with users of different rights: the one that may see the table counts.
 		$rows = null
@@ -355,7 +358,7 @@ static reports {
 		}
 		if ($rows === null) continue
 		$hosts = []
-		foreach (array_keys($dirs) AS $dir) $hosts = array_merge($hosts, static::dirHosts($dir))
+		foreach (array_keys($dirs) AS $path) $hosts = array_merge($hosts, static::dirHosts($path))
 		$entries = []
 		foreach ($rows AS $r){
 			$entries[] = [
