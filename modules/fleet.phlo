@@ -309,7 +309,7 @@ static reports {
 			$pdo = new \PDO('mysql:host='.$db['host'].';dbname='.$db['database'], (string)($db['user'] ?? ''), (string)($db['password'] ?? ''), [\PDO::ATTR_TIMEOUT => 3, \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION])
 			if (!$pdo->query("SHOW TABLES LIKE 'feedback'")->fetchColumn()) continue
 			$cols = $pdo->query('SHOW COLUMNS FROM feedback')->fetchAll(\PDO::FETCH_COLUMN)
-			$want = array_values(array_intersect(['id', 'app', 'kind', 'severity', 'status', 'screen', 'did', 'url', 'created', 'updated'], $cols))
+			$want = array_values(array_intersect(['id', 'app', 'kind', 'severity', 'status', 'screen', 'did', 'url', 'image', 'created', 'updated'], $cols))
 			if (!in_array('status', $want, true) || !in_array('created', $want, true)) continue
 			$st = $pdo->prepare('SELECT '.implode(', ', $want).' FROM feedback WHERE status NOT IN ('.$marks.') ORDER BY created LIMIT 100')
 			$st->execute($closed)
@@ -329,6 +329,7 @@ static reports {
 				'screen' => (string)($r['screen'] ?? void),
 				'summary' => mb_substr(trim((string)($r['did'] ?? void)), 0, 200),
 				'url' => (string)($r['url'] ?? void),
+				'image' => !empty($r['image']),
 				'created' => (int)$r['created'],
 				'updated' => (int)($r['updated'] ?? 0),
 			]
@@ -336,6 +337,54 @@ static reports {
 		$out[(string)$db['database']] = ['open' => count($entries), 'oldest' => $entries ? (int)$entries[0]['created'] : 0, 'entries' => $entries]
 	}
 	return $out
+}
+
+// The database behind a report, found the way reports() finds it: the first sibling app whose creds.ini names it.
+static reportDb(string $database):?array {
+	foreach (glob(dirname(static::base()).'/*/data/creds.ini') ?: [] AS $file){
+		$ini = @parse_ini_file($file, true, INI_SCANNER_RAW)
+		$db = is_array($ini) ? ($ini['mysql'] ?? null) : null
+		if (is_array($db) && (string)($db['database'] ?? void) === $database && !empty($db['host'])) return $db
+	}
+	return null
+}
+
+// The screenshot of one report: type and bytes, from the image table next to feedback, or null.
+static reportImage(string $database, int $id):?array {
+	$db = static::reportDb($database)
+	if (!$db) return null
+	try {
+		$pdo = new \PDO('mysql:host='.$db['host'].';dbname='.$db['database'], (string)($db['user'] ?? ''), (string)($db['password'] ?? ''), [\PDO::ATTR_TIMEOUT => 3, \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION])
+		foreach (['feedback_image', 'feedback_images'] AS $table){
+			if (!$pdo->query("SHOW TABLES LIKE '$table'")->fetchColumn()) continue
+			$st = $pdo->prepare('SELECT type, data FROM '.$table.' WHERE feedback = ?')
+			$st->execute([$id])
+			$row = $st->fetch(\PDO::FETCH_ASSOC)
+			return $row ? ['type' => (string)($row['type'] ?: 'image/webp'), 'data' => (string)$row['data']] : null
+		}
+	}
+	catch (\Throwable $e){
+		return null
+	}
+	return null
+}
+
+// The same screenshot through the node that holds it: this node directly, a polled peer over its
+// signed feed address. The type is read off the bytes, as the peer only sends those.
+static peerImage(string $node, string $database, int $id):?array {
+	if ($node === 'local') return static::reportImage($database, $id)
+	$cfg = (static::peers() ?? [])->$node ?? null
+	$url = trim((string)($cfg->url ?? void))
+	$secret = (string)($cfg->secret ?? void)
+	if ($url === void || $secret === void) return null
+	try {
+		$data = (string)HTTP(rtrim($url, slash).'/api/report/'.rawurlencode($database).slash.$id.'/image', static::signHeaders($secret), timeout: 15)
+	}
+	catch (\Throwable $e){
+		return null
+	}
+	$type = str_starts_with($data, 'RIFF') && substr($data, 8, 4) === 'WEBP' ? 'image/webp' : (str_starts_with($data, "\x89PNG") ? 'image/png' : (str_starts_with($data, "\xFF\xD8") ? 'image/jpeg' : void))
+	return $type !== void ? ['type' => $type, 'data' => $data] : null
 }
 
 static whatsapp {
@@ -777,6 +826,15 @@ route GET api feed {
 	%security->api
 	if (!static::authPeer()) return output(['error' => 'unauthorized'], code: 401)
 	return output(static::feedData())
+}
+
+// The screenshot of one report, for the dashboard that polls this node: who may read the feed may read it.
+route GET api report $db $id image {
+	%security->api
+	if (!static::authPeer()) return output(['error' => 'unauthorized'], code: 401)
+	$image = static::reportImage((string)$db, (int)$id)
+	if (!$image) return output(['error' => 'no image'], code: 404)
+	return output($image['data'], type: $image['type'])
 }
 
 route GET api visitors {

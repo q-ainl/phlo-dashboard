@@ -118,6 +118,21 @@ route GET api fleet $node {
 	return static::answer($node)
 }
 
+// The screenshot of one report, through the node that holds it, for a client that may read that node.
+route GET api fleet $node report $db $id image {
+	%security->api
+	$name = static::gate()
+	if (!$name) return
+	if (!in_array($node, static::allowed($name), true)){
+		static::note($name, 404)
+		return output(['error' => 'unknown node'], code: 404)
+	}
+	$image = fleet::peerImage((string)$node, (string)$db, (int)$id)
+	static::note($name, $image ? 200 : 404)
+	if (!$image) return output(['error' => 'no image'], code: 404)
+	return output($image['data'], type: $image['type'])
+}
+
 // ---------- the commit log ----------
 
 // The same token, the same client scoping, over the table the code sync fills. Rows for a feed, totals
