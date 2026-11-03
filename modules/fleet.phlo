@@ -304,10 +304,11 @@ static reports {
 		if (!is_array($db) || empty($db['host']) || empty($db['database'])) continue
 		$key = $db['host'].'/'.$db['database']
 		if (isset($seen[$key])) continue
-		$seen[$key] = true
 		try {
 			$pdo = new \PDO('mysql:host='.$db['host'].';dbname='.$db['database'], (string)($db['user'] ?? ''), (string)($db['password'] ?? ''), [\PDO::ATTR_TIMEOUT => 3, \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION])
+			// Apps share a database with users of different rights: the one that may see the table counts.
 			if (!$pdo->query("SHOW TABLES LIKE 'feedback'")->fetchColumn()) continue
+			$seen[$key] = true
 			$cols = $pdo->query('SHOW COLUMNS FROM feedback')->fetchAll(\PDO::FETCH_COLUMN)
 			$want = array_values(array_intersect(['id', 'app', 'kind', 'severity', 'status', 'screen', 'did', 'url', 'image', 'created', 'updated'], $cols))
 			if (!in_array('status', $want, true) || !in_array('created', $want, true)) continue
