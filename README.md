@@ -9,6 +9,7 @@ The Dashboard is the operations layer of the [Phlo platform](https://phlo.tech/e
 ## Features
 
 - **Fleet overview**: real time status of every host and app across the fleet (uptime, CPU, memory, disk, errors, visitors).
+- **Reports**: the open reports of every app on a node, read from any app database on the node that has a `feedback` table; counted on the server card, listed per node, and carried in the feed and the API. Which statuses count as closed is `closed = a, b` under `[reports]` in creds.ini.
 - **Database admin** (`dbadmin`): browse and edit rows, a full structure editor with column reordering, indexes, foreign keys, privileges, an SQL console, import and export, foreign key navigation, database wide search and server status. Works with MySQL and SQLite.
 - **Notifications**: a server scoped inbox; apps push notifications via a secret protected endpoint.
 - **Subscriptions**: users subscribe to (server, event) pairs and get proactive WhatsApp or dashboard delivery.

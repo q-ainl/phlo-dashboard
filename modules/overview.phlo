@@ -1,5 +1,6 @@
 static icons => [
 	'activity' => '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+	'flag' => '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/>',
 	'server' => '<rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/>',
 	'cpu' => '<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/>',
 	'harddrive' => '<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/>',
@@ -64,6 +65,12 @@ static errOccTotal($feed){
 	return $t
 }
 
+static reportsTotal($feed){
+	$t = 0
+	foreach (($feed['reports'] ?? []) AS $x) $t += (int)($x['open'] ?? 0)
+	return $t
+}
+
 static serverCard($node){
 	$feed = fleet::cached($node) ?: ['label' => $node, 'ok' => false]
 	$ok = $feed['ok'] ?? false
@@ -73,8 +80,10 @@ static serverCard($node){
 	$m = (object)($feed['metrics'] ?? [])
 	$errTotal = static::errOccTotal($feed)
 	$vis = (int)array_sum($feed['visitors'] ?? [])
+	$repTotal = static::reportsTotal($feed)
+	$repStat = $repTotal ? tag('span', static::icon('flag', 14).tag('span', number_format($repTotal)), class: 'kpi-stat warn', title: number_format($repTotal).' open reports') : void
 	$errStat = $errTotal ? tag('span', static::icon('alert', 14).tag('span', number_format($errTotal)), class: 'kpi-stat bad', title: number_format($errTotal).' errors') : tag('span', static::icon('check', 14, 'emerald').tag('span', '0'), class: 'kpi-stat good', title: 'No errors')
-	$stats = tag('div', static::kpiStat('server', count($feed['apps'] ?? [])).static::kpiStat('clock', age_human($m->uptime_sec ?? 0)).static::kpiStat('users', number_format($vis)).$errStat, class: 'kpi-stats')
+	$stats = tag('div', static::kpiStat('server', count($feed['apps'] ?? [])).static::kpiStat('clock', age_human($m->uptime_sec ?? 0)).static::kpiStat('users', number_format($vis)).$errStat.$repStat, class: 'kpi-stats')
 	return tag('a', tag('div', $head.$stats.static::metricBars($m), class: 'kpi-card'), href: '/node/'.$node, class: 'kpi-link async')
 }
 
@@ -211,6 +220,48 @@ static nodeWaPanel($node, $feed){
 	return tag('section', $h.tag('div', tag('table', tag('thead', $head).tag('tbody', $rows)), class: 'st-scroll'), class: 'sw-card st-card')
 }
 
+// One open report. The screen links to the page it was filed on when the app sent one along.
+static reportRow($db, $e){
+	$app = $db.((string)($e['app'] ?? void) !== void ? ' · '.$e['app'] : void)
+	$severity = (string)($e['severity'] ?? void)
+	$screen = esc((string)($e['screen'] ?? void))
+	$url = (string)($e['url'] ?? void)
+	$flt = strtolower($app.' '.$severity.' '.($e['kind'] ?? '').' '.($e['screen'] ?? '').' '.($e['summary'] ?? ''))
+	$cells = tag('td', tag('span', esc($app), class: 'g-name'))
+	$cells .= tag('td', esc((string)($e['kind'] ?? void)), class: 'c')
+	$cells .= tag('td', $severity !== void ? tag('span', esc($severity), class: 'st-badge') : void, class: 'c')
+	$cells .= tag('td', $url !== void ? tag('a', $screen, href: $url, target: '_blank', class: 'h-link') : $screen)
+	$cells .= tag('td', tag('span', esc((string)($e['summary'] ?? void)), class: 'err-msg'))
+	$cells .= tag('td', tag('span', age_human(time() - (int)($e['created'] ?? 0)), title: date('Y-m-d H:i', (int)($e['created'] ?? 0))), class: 'c')
+	return tag('tr', $cells, data_filter: $flt)
+}
+
+// The open reports of a node, oldest first per database; nothing when there are none, so the node page
+// only shows the block where it means something.
+static reportsTable($node, $feed){
+	$rows = void
+	$count = 0
+	foreach ((array)($feed['reports'] ?? []) AS $db => $info){
+		foreach ((array)($info['entries'] ?? []) AS $e){
+			$rows .= static::reportRow($db, $e)
+			$count++
+		}
+	}
+	if (!$count) return void
+	$head = tag('tr', tag('th', 'App').tag('th', 'Kind', class: 'c').tag('th', 'Severity', class: 'c').tag('th', 'Screen').tag('th', 'Report').tag('th', 'Since', class: 'c'))
+	$filter = tag('input', type: 'search', placeholder: 'Filter reports...', class: 'flt')
+	$tools = tag('div', $filter.tag('span', $count.' open', class: 'st-badge'), class: 'st-tools')
+	$h = tag('div', tag('h2', static::icon('flag', 20, 'blue').tag('span', 'Open reports'), class: 'st-title').$tools, class: 'st-head')
+	return tag('section', $h.tag('div', tag('table', tag('thead', $head).tag('tbody', $rows)), class: 'st-scroll'), class: 'sw-card st-card')
+}
+
+static reportsView($node){
+	$feed = fleet::cached($node) ?: ['label' => $node, 'ok' => false]
+	$back = tag('a', static::icon('arrow', 15, 'muted').tag('span', 'Back to overview'), href: '/overview', class: 'err-back async')
+	$table = static::reportsTable($node, $feed) ?: tag('section', tag('p', static::icon('check', 16, 'emerald').tag('span', 'No open reports.'), class: 'err-empty'), class: 'sw-card st-card')
+	return tag('div', $back.$table, class: 'dash')
+}
+
 static nodeDetail($node){
 	$feed = fleet::cached($node) ?: ['label' => $node, 'ok' => false]
 	$ok = $feed['ok'] ?? false
@@ -221,10 +272,12 @@ static nodeDetail($node){
 	$m = (object)($feed['metrics'] ?? [])
 	$errTotal = static::errOccTotal($feed)
 	$vis = (int)array_sum($feed['visitors'] ?? [])
+	$repTotal = static::reportsTotal($feed)
+	$repStat = $repTotal ? tag('a', static::icon('flag', 14).tag('span', number_format($repTotal).' open reports'), href: '/reports/'.$node, class: 'kpi-stat warn link async') : void
 	$errStat = $errTotal ? tag('a', static::icon('alert', 14).tag('span', number_format($errTotal).' errors'), href: '/errors/'.$node, class: 'kpi-stat bad link async') : tag('span', static::icon('check', 14, 'emerald').tag('span', 'no errors'), class: 'kpi-stat good')
-	$stats = tag('div', static::kpiStat('server', count($feed['apps'] ?? []).' hosts').static::kpiStat('clock', age_human($m->uptime_sec ?? 0)).static::kpiStat('users', number_format($vis).' visitors').$errStat.(in_array($feed['mode'] ?? '', ['self', 'pull']) && ($feed['update'] ?? false) ? tag('button', static::icon('refresh', 14).tag('span', 'Update Phlo'), type: 'button', data_post: 'manage/'.$node.'/update', data_confirm: 'Update the Phlo stack on '.($feed['label'] ?? $node).'?', class: 'mg-btn') : void), class: 'kpi-stats nd-stats')
+	$stats = tag('div', static::kpiStat('server', count($feed['apps'] ?? []).' hosts').static::kpiStat('clock', age_human($m->uptime_sec ?? 0)).static::kpiStat('users', number_format($vis).' visitors').$errStat.$repStat.(in_array($feed['mode'] ?? '', ['self', 'pull']) && ($feed['update'] ?? false) ? tag('button', static::icon('refresh', 14).tag('span', 'Update Phlo'), type: 'button', data_post: 'manage/'.$node.'/update', data_confirm: 'Update the Phlo stack on '.($feed['label'] ?? $node).'?', class: 'mg-btn') : void), class: 'kpi-stats nd-stats')
 	$metricsCard = tag('section', tag('div', $head.$stats, class: 'nd-top').static::metricBars($m), class: 'sw-card nd-card')
-	return tag('div', $back.$metricsCard.static::nodeWaPanel($node, $feed).static::nodeHostsTable($node, $feed), class: 'dash')
+	return tag('div', $back.$metricsCard.static::nodeWaPanel($node, $feed).static::reportsTable($node, $feed).static::nodeHostsTable($node, $feed), class: 'dash')
 }
 
 route both GET overview {
@@ -241,6 +294,12 @@ route both GET errors $node $app= {
 	%app->active = 'overview'
 	if (!auth::user()?->canServer($node)) return main('No access to this server.', 'No access')
 	main(static::errorsView($node, $app), 'Errors')
+}
+
+route both GET reports $node {
+	%app->active = 'overview'
+	if (!auth::user()?->canServer($node)) return main('No access to this server.', 'No access')
+	main(static::reportsView($node), 'Reports · '.$node)
 }
 
 route both GET node $node {
@@ -380,6 +439,7 @@ on('input', 'input.flt', el => {
 }
 .kpi-stat.bad: color: $error
 .kpi-stat.good: color: $success
+.kpi-stat.warn: color: $warn
 .kpi-stat.link {
 	cursor: pointer
 	text-decoration: none

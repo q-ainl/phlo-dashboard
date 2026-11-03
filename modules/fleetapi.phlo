@@ -63,6 +63,7 @@ static note($name, $status){
 static slim($data){
 	unset($data['backups']['files'], $data['backups']['gone'])
 	foreach (array_keys((array)($data['errors'] ?? [])) AS $app) unset($data['errors'][$app]['entries'])
+	foreach (array_keys((array)($data['reports'] ?? [])) AS $app) unset($data['reports'][$app]['entries'])
 	return $data
 }
 

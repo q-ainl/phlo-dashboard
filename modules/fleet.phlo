@@ -284,6 +284,60 @@ static visitors($db){
 	}
 }
 
+// Open reports of the apps on this node: every sibling app whose creds.ini names a database with a
+// feedback table, one query per database. Which statuses count as closed is a comma list in creds.ini
+// under [reports] closed; the default covers the fleet's own apps.
+static reportsClosed {
+	$cfg = (string)(%creds->reports?->closed ?? void)
+	$list = $cfg !== void ? array_values(array_filter(loop(explode(',', $cfg), fn($s) => trim($s)), 'strlen')) : []
+	return $list ?: ['opgelost', 'resolved', 'closed', 'done']
+}
+
+static reports {
+	$out = []
+	$seen = []
+	$closed = static::reportsClosed()
+	$marks = implode(', ', array_fill(0, count($closed), '?'))
+	foreach (glob(dirname(static::base()).'/*/data/creds.ini') ?: [] AS $file){
+		$ini = @parse_ini_file($file, true, INI_SCANNER_RAW)
+		$db = is_array($ini) ? ($ini['mysql'] ?? null) : null
+		if (!is_array($db) || empty($db['host']) || empty($db['database'])) continue
+		$key = $db['host'].'/'.$db['database']
+		if (isset($seen[$key])) continue
+		$seen[$key] = true
+		try {
+			$pdo = new \PDO('mysql:host='.$db['host'].';dbname='.$db['database'], (string)($db['user'] ?? ''), (string)($db['password'] ?? ''), [\PDO::ATTR_TIMEOUT => 3, \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION])
+			if (!$pdo->query("SHOW TABLES LIKE 'feedback'")->fetchColumn()) continue
+			$cols = $pdo->query('SHOW COLUMNS FROM feedback')->fetchAll(\PDO::FETCH_COLUMN)
+			$want = array_values(array_intersect(['id', 'app', 'kind', 'severity', 'status', 'screen', 'did', 'url', 'created', 'updated'], $cols))
+			if (!in_array('status', $want, true) || !in_array('created', $want, true)) continue
+			$st = $pdo->prepare('SELECT '.implode(', ', $want).' FROM feedback WHERE status NOT IN ('.$marks.') ORDER BY created LIMIT 100')
+			$st->execute($closed)
+			$rows = $st->fetchAll(\PDO::FETCH_ASSOC)
+		}
+		catch (\Throwable $e){
+			continue
+		}
+		$entries = []
+		foreach ($rows AS $r){
+			$entries[] = [
+				'id' => (int)$r['id'],
+				'app' => (string)($r['app'] ?? void),
+				'kind' => (string)($r['kind'] ?? void),
+				'severity' => (string)($r['severity'] ?? void),
+				'status' => (string)$r['status'],
+				'screen' => (string)($r['screen'] ?? void),
+				'summary' => mb_substr(trim((string)($r['did'] ?? void)), 0, 200),
+				'url' => (string)($r['url'] ?? void),
+				'created' => (int)$r['created'],
+				'updated' => (int)($r['updated'] ?? 0),
+			]
+		}
+		$out[(string)$db['database']] = ['open' => count($entries), 'oldest' => $entries ? (int)$entries[0]['created'] : 0, 'entries' => $entries]
+	}
+	return $out
+}
+
 static whatsapp {
 	$list = []
 	foreach (glob(static::base().'/config/wa*.js') ?: [] AS $f){
@@ -386,6 +440,7 @@ static collect {
 		],
 		'apps' => $apps,
 		'errors' => $errors,
+		'reports' => static::reports(),
 		'whatsapp' => static::whatsapp(),
 		'backups' => static::backups(),
 		'update' => static::canUpdate(),
