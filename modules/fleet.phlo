@@ -246,7 +246,7 @@ static nginxApps {
 			if (!$hostnames) continue
 			$pureRedirect = (bool)preg_match('/\breturn\s+30\d\b/', $block) || (bool)preg_match('/\brewrite\b[^;]+\b(permanent|redirect)\s*;/', $block)
 			$root = ($r = regex('/^\s*root\s+(\S+?)\s*;/m', $block)[1] ?? void) ? static::stripWww($r) : void
-			$rec = static::normalizeApp($appName, $hostnames, [], $pureRedirect, 'prod') + static::publicFlags($root)
+			$rec = static::normalizeApp($appName, $hostnames, [], $pureRedirect, 'prod') + static::publicFlags($root) + ['phlo' => static::appPhlo($root)]
 			$key = $rec['host']
 			if (!isset($byHost[$key]) || ($byHost[$key]['redirect'] && !$rec['redirect'])) $byHost[$key] = $rec
 		}

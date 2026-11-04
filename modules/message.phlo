@@ -52,7 +52,7 @@ route both GET messages {
 	$u = auth::user()
 	if ($u){
 		$ids = []
-		foreach (message::records(where: 'read_at IS NULL', limit: 200) AS $m) if ($u->canServer((string)$m->server)) $ids[] = $m->id
+		foreach (static::feed() AS $m) if (!$m->read_at && $u->canServer((string)$m->server)) $ids[] = $m->id
 		$ids && message::change('read_at IS NULL AND id IN ('.implode(comma, array_fill(0, count($ids), qm)).')', ...$ids, read_at: time())
 	}
 	main($out, 'Notifications')
