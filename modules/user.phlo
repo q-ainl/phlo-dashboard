@@ -20,7 +20,7 @@ prop serverIds => array_filter(array_map('trim', explode(',', (string)$this->all
 prop moduleIds => array_filter(array_map('trim', explode(',', (string)$this->allowed_modules)))
 prop isAdmin => $this->role === 'admin'
 
-static authUser => (%session->user ?? null) ? user::record(id: %session->user) : null
+static authUser => (%session->user ?? null) ? user::record(id: %session->user, active: 1) : null
 
 static verify($email, $password){
 	$email = trim((string)$email)
@@ -48,6 +48,7 @@ static seed($name, $email, $password, $role = 'user', $servers = '', $modules = 
 		created: time(),
 		changed: time(),
 	)
+	if (!user::record(id: $id)) return obj(ok: false, error: 'not created: check role, servers and modules')
 	return obj(ok: true, id: $id, email: $email, role: trim((string)$role))
 }
 

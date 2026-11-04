@@ -28,7 +28,7 @@ static unread {
 	$u = auth::user()
 	if (!$u) return 0
 	$n = 0
-	foreach (message::records(read_at: null, limit: 200) AS $m) if ($u->canServer((string)$m->server)) $n++
+	foreach (message::records(where: 'read_at IS NULL', limit: 200) AS $m) if ($u->canServer((string)$m->server)) $n++
 	return $n
 }
 
@@ -52,7 +52,7 @@ route both GET messages {
 	$u = auth::user()
 	if ($u){
 		$ids = []
-		foreach (message::records(read_at: null, limit: 200) AS $m) if ($u->canServer((string)$m->server)) $ids[] = $m->id
+		foreach (message::records(where: 'read_at IS NULL', limit: 200) AS $m) if ($u->canServer((string)$m->server)) $ids[] = $m->id
 		$ids && message::change('read_at IS NULL AND id IN ('.implode(comma, array_fill(0, count($ids), qm)).')', ...$ids, read_at: time())
 	}
 	main($out, 'Notifications')
