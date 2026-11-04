@@ -119,6 +119,17 @@ static snippetRoot($name){
 
 // Shared host normalization: primary host = shortest non-www, env from a dev./stage. prefix, the rest become
 // aliases. Each discovery adapter feeds raw hostnames + which of them are redirect-only.
+// The engine an app was built with, from the manifest a 1.1 build writes (php/ in a dev tree, the root in a release).
+// An app without one runs on the node's engine, so the node's version stands for it.
+static appPhlo($root):?string {
+	if (!$root) return null
+	foreach ([$root.'/php/manifest.json', $root.'/manifest.json'] AS $file){
+		$m = json_decode((string)@file_get_contents($file), true)
+		if (is_array($m) && isset($m['phlo'])) return (string)$m['phlo']
+	}
+	return null
+}
+
 static normalizeApp($appName, $hostnames, $redirected, $pureRedirect, $env){
 	$canonical = array_values(array_diff($hostnames, $redirected))
 	if (!$canonical){
@@ -202,7 +213,7 @@ static caddyApps {
 					else $pureRedirect = true
 				}
 			}
-			$apps[] = static::normalizeApp($appName, $hostnames, $redirected, $pureRedirect, $env) + static::publicFlags($root, $env)
+			$apps[] = static::normalizeApp($appName, $hostnames, $redirected, $pureRedirect, $env) + static::publicFlags($root, $env) + ['phlo' => static::appPhlo($root)]
 		}
 	}
 	return $apps

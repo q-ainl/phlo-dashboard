@@ -44,6 +44,7 @@ static envState($code){
 static kpiStat($ic, $val, $cls = void) => tag('span', static::icon($ic, 14).tag('span', $val), class: 'kpi-stat'.($cls ? ' '.$cls : void))
 
 static envBadge($env) => tag('span', $env, class: 'env-badge '.$env)
+static phloBadge($version) => $version !== void ? tag('span', 'Phlo '.esc($version), class: 'phlo-badge') : void
 
 static stateCell($state, $label, $detail = void) => tag('span', tag('span', void, class: 'st-dot '.$state).tag('span', $label, class: 'sc-code '.$state).($detail !== void ? tag('span', $detail, class: 'sc-ms') : void), class: 'sc')
 
@@ -99,7 +100,7 @@ static hostRows($node, $feed){
 		if (in_array($app, fleet::hiddenSites(), true)) continue
 		$aliases = (array)($a['aliases'] ?? [])
 		$vis = (int)($visitors[$host] ?? 0) + array_sum(array_map(fn($al) => (int)($visitors[$al] ?? 0), $aliases))
-		$out[] = ['node' => $node, 'label' => $feed['label'] ?? $node, 'app' => $app, 'host' => $host, 'aliases' => $aliases, 'env' => (string)($a['env'] ?? 'prod'), 'code' => (int)($a['code'] ?? 0), 'ms' => (int)($a['ms'] ?? 0), 'vis' => $vis, 'errOcc' => (int)($errors[$app]['byHost'][$host]['occurrences'] ?? 0)]
+		$out[] = ['node' => $node, 'label' => $feed['label'] ?? $node, 'app' => $app, 'host' => $host, 'aliases' => $aliases, 'env' => (string)($a['env'] ?? 'prod'), 'phlo' => (string)($a['phlo'] ?? void), 'code' => (int)($a['code'] ?? 0), 'ms' => (int)($a['ms'] ?? 0), 'vis' => $vis, 'errOcc' => (int)($errors[$app]['byHost'][$host]['occurrences'] ?? 0)]
 	}
 	return $out
 }
@@ -126,7 +127,7 @@ static hostsTable($rows, $showServer){
 			$visCell = tag('span', static::icon('users', 14, 'blue').tag('span', number_format($hh['vis']), class: 'vis-num'), class: 'vis')
 			$serverCol = $showServer ? tag('td', tag('span', esc((string)$hh['label']), class: 'h-server')) : void
 			$flt = strtolower($app.' '.($showServer ? $hh['label'].' ' : '').$hh['host'].' '.$hh['env'])
-			$body .= tag('tr', $serverCol.tag('td', $hostCell).tag('td', static::envBadge($hh['env']), class: 'c').tag('td', static::statusCell($hh['code'], $hh['ms']), class: 'c').tag('td', $visCell, class: 'c').tag('td', $errCell, class: 'c'), class: 'h-row', data_filter: $flt)
+			$body .= tag('tr', $serverCol.tag('td', $hostCell).tag('td', static::envBadge($hh['env']).static::phloBadge($hh['phlo']), class: 'c').tag('td', static::statusCell($hh['code'], $hh['ms']), class: 'c').tag('td', $visCell, class: 'c').tag('td', $errCell, class: 'c'), class: 'h-row', data_filter: $flt)
 			$count++
 		}
 	}
@@ -325,6 +326,9 @@ on('input', 'input.flt', el => {
 .ic.blue: color: $primary
 .ic.emerald: color: $success
 .ic.muted: color: $muted
+.phlo-badge: display: block
+.phlo-badge: font-size: 11px
+.phlo-badge: color: $muted
 .ic.error: color: $error
 .ic.lock: color: $muted
 .dash {
